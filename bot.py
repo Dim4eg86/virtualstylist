@@ -5,37 +5,62 @@ from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 
 import database as db
 from replicate_api import generate_vton_image
 
-# Инициализация бота
-bot = Bot(token=os.getenv("BOT_TOKEN"))
+bot = Bot(token=os.getenv("BOT_TOKEN"), parse_mode="HTML")
 dp = Dispatcher()
 
 class VTONState(StatesGroup):
     wait_human = State()
     wait_category = State()
     wait_garment = State()
+    wait_broadcast = State() # Для рассылки
+
+# --- КЛАВИАТУРЫ ---
+
+def get_main_menu():
+    builder = ReplyKeyboardBuilder()
+    builder.button(text="👗 Примерить одежду")
+    builder.button(text="💰 Пополнить баланс")
+    builder.button(text="👤 Мой профиль")
+    builder.adjust(2)
+    return builder.as_markup(resize_keyboard=True)
 
 def get_category_kb():
     builder = InlineKeyboardBuilder()
-    builder.button(text="👕 Верх (футболки, куртки)", callback_data="set_upper")
-    builder.button(text="👖 Низ (брюки, юбки)", callback_data="set_lower")
-    builder.button(text="👗 Платье / Комбинезон", callback_data="set_dresses")
-    builder.adjust(1)
+    builder.button(text="👕 Верх", callback_data="set_upper")
+    builder.button(text="👖 Низ", callback_data="set_lower")
+    builder.button(text="👗 Платье", callback_data="set_dresses")
+    builder.adjust(3)
     return builder.as_markup()
+
+# --- ОБРАБОТЧИКИ КОМАНД ---
 
 @dp.message(Command("start"))
 async def start(message: types.Message):
-    user = await db.get_user(message.from_user.id)
+    await db.get_user(message.from_user.id)
     await message.answer(
-        f"Привет! Это твой AI-стилист 👗\n\n"
-        f"Твой баланс: **{user['balance']}** примерок.\n\n"
-        f"Пришли фото человека (желательно в полный рост), чтобы начать."
+        f"<b>Добро пожаловать в Virtual Stylist AI!</b> 👗✨\n\n"
+        f"Я помогу тебе примерить любую одежду по фото.\n"
+        f"Используй меню ниже, чтобы начать.",
+        reply_markup=get_main_menu()
     )
 
+@dp.message(F.text == "👤 Мой профиль")
+async def profile(message: types.Message):
+    user = await db.get_user(message.from_user.id)
+    status = "Администратор 👑" if user['is_admin'] else "Пользователь"
+    await message.answer(
+        f"<b>Твой профиль:</b>\n"
+        f"🆔 ID: <code>{message.from_user.id}</code>\n"
+        f"🔋 Баланс: <b>{user['balance']}</b> примерок\n"
+        f"⭐ Статус: {status}"
+    )
+
+@dp.message(F.text == "💰 Пополнить баланс")
 @dp.message(Command("buy"))
 async def buy(message: types.Message):
     await message.answer_invoice(
@@ -44,75 +69,106 @@ async def buy(message: types.Message):
         payload="5_pack",
         provider_token=os.getenv("PAYMENT_TOKEN"),
         currency="RUB",
-        prices=[types.LabeledPrice(label="5 примерок", amount=25000)] # 250 руб
+        prices=[types.LabeledPrice(label="5 примерок", amount=25000)]
     )
 
-@dp.pre_checkout_query()
-async def pre_checkout(query: types.PreCheckoutQuery):
-    await bot.answer_pre_checkout_query(query.id, ok=True)
+# --- АДМИН-ПАНЕЛЬ ---
 
-@dp.message(F.successful_payment)
-async def success_payment(message: types.Message):
-    await db.update_balance(message.from_user.id, 5)
-    await message.answer("✅ Оплата прошла! Вам начислено 5 попыток. Можете присылать фото.")
-
-@dp.callback_query(F.data.startswith("set_"))
-async def callbacks_category(callback: types.CallbackQuery, state: FSMContext):
-    cat_map = {"upper": "upper_body", "lower": "lower_body", "dresses": "dresses"}
-    cat_name = {"upper": "Верх", "lower": "Низ", "dresses": "Платье"}
-    key = callback.data.split("_")[1]
-    
-    await state.update_data(category=cat_map[key], category_name=cat_name[key])
-    await callback.message.edit_text(f"Выбрано: **{cat_name[key]}**. Теперь пришли фото одежды, которую хочешь примерить.")
-    await state.set_state(VTONState.wait_garment)
-
-@dp.message(F.photo)
-async def handle_photos(message: types.Message, state: FSMContext):
+@dp.message(Command("admin"))
+async def admin_panel(message: types.Message):
     user = await db.get_user(message.from_user.id)
-    if user['balance'] <= 0:
-        return await message.answer("❌ У вас закончились попытки. Нажмите /buy чтобы пополнить баланс.")
+    if not user['is_admin']:
+        return
 
-    data = await state.get_data()
+    # Считаем пользователей (простой запрос через asyncpg)
+    conn = await db.asyncpg.connect(db.DATABASE_URL)
+    count = await conn.fetchval("SELECT COUNT(*) FROM users")
+    await conn.close()
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📢 Сделать рассылку", callback_data="admin_broadcast")
+    await message.answer(
+        f"<b>Панель администратора</b> ⚙️\n\n"
+        f"Всего пользователей: <b>{count}</b>",
+        reply_markup=builder.as_markup()
+    )
+
+@dp.callback_query(F.data == "admin_broadcast")
+async def start_broadcast(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.answer("Введите текст рассылки. Его получат ВСЕ пользователи бота.")
+    await state.set_state(VTONState.wait_broadcast)
+    await callback.answer()
+
+@dp.message(VTONState.wait_broadcast)
+async def perform_broadcast(message: types.Message, state: FSMContext):
+    conn = await db.asyncpg.connect(db.DATABASE_URL)
+    users = await conn.fetch("SELECT user_id FROM users")
+    await conn.close()
+
+    count = 0
+    for u in users:
+        try:
+            await bot.send_message(u['user_id'], message.text)
+            count += 1
+            await asyncio.sleep(0.05) # Защита от спам-фильтра ТГ
+        except:
+            continue
+    
+    await message.answer(f"✅ Рассылка завершена! Сообщение получили {count} человек.")
+    await state.clear()
+
+# --- ЛОГИКА ГЕНЕРАЦИИ ---
+
+@dp.message(F.text == "👗 Примерить одежду")
+async def start_vton(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer("<b>Шаг 1:</b> Пришли фото человека (в полный рост или по пояс).")
+    await state.set_state(VTONState.wait_human)
+
+@dp.message(VTONState.wait_human, F.photo)
+async def human_step(message: types.Message, state: FSMContext):
     file_id = message.photo[-1].file_id
     file = await bot.get_file(file_id)
     url = f"https://api.telegram.org/file/bot{os.getenv('BOT_TOKEN')}/{file.file_path}"
+    
+    await state.update_data(human=url)
+    await message.answer("<b>Шаг 2:</b> Выбери категорию одежды:", reply_markup=get_category_kb())
 
-    if 'human' not in data:
-        await state.update_data(human=url)
-        await message.answer("Отлично! Что будем примерять?", reply_markup=get_category_kb())
-        await state.set_state(VTONState.wait_category)
-    else:
-        # Второе фото получено — запускаем магию
-        cat = data.get('category', 'upper_body')
-        status_msg = await message.answer("⏳ Магия началась! Нейросеть изучает ваши фото...")
-        
-        try:
-            # Обновляем статус через 5 секунд для "оживления"
-            await asyncio.sleep(2)
-            await status_msg.edit_text("🤖 Подбираем одежду под вашу фигуру...")
-            
-            # Запускаем генерацию
-            result_url = await generate_vton_image(data['human'], url, cat)
-            
-            if result_url:
-                await status_msg.edit_text("✨ Почти готово! Создаем финальное фото...")
-                
-                photo_res = requests.get(result_url).content
-                await message.answer_photo(
-                    types.BufferedInputFile(photo_res, filename="result.jpg"),
-                    caption=f"Твой новый образ готов! ✨\n\nЧтобы попробовать еще раз, просто пришли новое фото человека."
-                )
-                
-                if not user['is_admin']:
-                    await db.update_balance(message.from_user.id, -1)
-            
-            await status_msg.delete() # Удаляем промежуточное сообщение
-            await state.clear()
-            
-        except Exception as e:
-            await status_msg.edit_text("❌ Извините, сервер сейчас перегружен. Попробуйте загрузить другие фото через пару минут.")
-            print(f"Error during generation: {e}")
-            await state.clear()
+@dp.callback_query(F.data.startswith("set_"))
+async def set_cat(callback: types.CallbackQuery, state: FSMContext):
+    cat_map = {"upper": "upper_body", "lower": "lower_body", "dresses": "dresses"}
+    key = callback.data.split("_")[1]
+    await state.update_data(category=cat_map[key])
+    await callback.message.edit_text("<b>Шаг 3:</b> Пришли фото одежды (на белом фоне или манекене).")
+    await state.set_state(VTONState.wait_garment)
+
+@dp.message(VTONState.wait_garment, F.photo)
+async def garment_step(message: types.Message, state: FSMContext):
+    user = await db.get_user(message.from_user.id)
+    data = await state.get_data()
+    
+    file_id = message.photo[-1].file_id
+    file = await bot.get_file(file_id)
+    garment_url = f"https://api.telegram.org/file/bot{os.getenv('BOT_TOKEN')}/{file.file_path}"
+    
+    status_msg = await message.answer("⏳ <b>Идет генерация...</b>\nОбычно это занимает 40-60 секунд.")
+    
+    try:
+        result_url = await generate_vton_image(data['human'], garment_url, data['category'])
+        photo_res = requests.get(result_url).content
+        await message.answer_photo(
+            types.BufferedInputFile(photo_res, filename="res.jpg"),
+            caption="✨ <b>Ваш образ готов!</b>\n\nНравится результат? Попробуйте еще раз!",
+            reply_markup=get_main_menu()
+        )
+        if not user['is_admin']:
+            await db.update_balance(message.from_user.id, -1)
+    except Exception as e:
+        await message.answer("❌ Произошла ошибка. Попробуйте другие фото.")
+        print(e)
+    finally:
+        await status_msg.delete()
+        await state.clear()
 
 async def main():
     await db.init_db()
