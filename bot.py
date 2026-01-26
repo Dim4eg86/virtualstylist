@@ -6,18 +6,23 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
+from aiogram.client.default import DefaultBotProperties # Добавили новый импорт
 
 import database as db
 from replicate_api import generate_vton_image
 
-bot = Bot(token=os.getenv("BOT_TOKEN"), parse_mode="HTML")
+# Инициализация бота с учетом новых правил aiogram 3.7+
+bot = Bot(
+    token=os.getenv("BOT_TOKEN"), 
+    default=DefaultBotProperties(parse_mode="HTML") # Теперь это пишется так
+)
 dp = Dispatcher()
 
 class VTONState(StatesGroup):
     wait_human = State()
     wait_category = State()
     wait_garment = State()
-    wait_broadcast = State() # Для рассылки
+    wait_broadcast = State()
 
 # --- КЛАВИАТУРЫ ---
 
@@ -80,7 +85,6 @@ async def admin_panel(message: types.Message):
     if not user['is_admin']:
         return
 
-    # Считаем пользователей (простой запрос через asyncpg)
     conn = await db.asyncpg.connect(db.DATABASE_URL)
     count = await conn.fetchval("SELECT COUNT(*) FROM users")
     await conn.close()
@@ -110,7 +114,7 @@ async def perform_broadcast(message: types.Message, state: FSMContext):
         try:
             await bot.send_message(u['user_id'], message.text)
             count += 1
-            await asyncio.sleep(0.05) # Защита от спам-фильтра ТГ
+            await asyncio.sleep(0.05)
         except:
             continue
     
@@ -167,7 +171,8 @@ async def garment_step(message: types.Message, state: FSMContext):
         await message.answer("❌ Произошла ошибка. Попробуйте другие фото.")
         print(e)
     finally:
-        await status_msg.delete()
+        if status_msg:
+            await status_msg.delete()
         await state.clear()
 
 async def main():
