@@ -1,11 +1,15 @@
 import asyncpg
 import os
+import asyncio
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 async def init_db():
+    if not DATABASE_URL:
+        print("ОШИБКА: DATABASE_URL не настроен!")
+        return
+        
     conn = await asyncpg.connect(DATABASE_URL)
-    # Создаем таблицу пользователей и админку для тебя
     await conn.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id BIGINT PRIMARY KEY,
@@ -13,9 +17,14 @@ async def init_db():
             is_admin BOOLEAN DEFAULT FALSE
         );
     ''')
-    # Делаем тебя админом (твой ID 610820340)
-    await conn.execute("INSERT INTO users (user_id, is_admin, balance) VALUES (610820340, TRUE, 999) ON CONFLICT DO NOTHING")
+    # Твой ID 610820340 — делаем админом
+    await conn.execute("""
+        INSERT INTO users (user_id, is_admin, balance) 
+        VALUES (610820340, TRUE, 999) 
+        ON CONFLICT (user_id) DO UPDATE SET is_admin = TRUE, balance = 999
+    """)
     await conn.close()
+    print("БД проинициализирована успешно")
 
 async def get_user(user_id):
     conn = await asyncpg.connect(DATABASE_URL)
