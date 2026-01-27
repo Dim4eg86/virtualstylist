@@ -11,6 +11,7 @@ from aiohttp import web
 
 import database as db
 from replicate_api import generate_vton_image
+from video_animation import animate_image
 import yookassa
 
 # Инициализация бота
@@ -29,7 +30,8 @@ class VTONState(StatesGroup):
     wait_garment = State()
     wait_broadcast = State()
     wait_support_message = State()
-    wait_admin_reply = State()  # Новое состояние для ответа админа
+    wait_admin_reply = State()
+    wait_animation_choice = State()  # Новое состояние для выбора анимации
 
 # --- КЛАВИАТУРЫ ---
 
@@ -54,25 +56,34 @@ def get_category_kb():
     return builder.as_markup()
 
 def get_packages_kb():
-    """Клавиатура с пакетами примерок"""
+    """Клавиатура с пакетами пополнения"""
     builder = InlineKeyboardBuilder()
     for package_id, info in yookassa.PACKAGES.items():
-        price = info['price'] / 100
-        per_item = price / info['credits']
+        price = info['amount'] / 100
         builder.button(
-            text=f"{info['title']} - {price:.0f}₽ ({per_item:.0f}₽/шт)",
+            text=f"{info['title']} {info['desc']}",
             callback_data=f"buy_{package_id}"
         )
     builder.adjust(1)
     return builder.as_markup()
 
 def get_result_actions():
-    """Действия после генерации"""
+    """Действия после генерации фото"""
     builder = InlineKeyboardBuilder()
+    builder.button(text="🎬 Создать видео (100₽)", callback_data="create_video")
     builder.button(text="🔄 Другую одежду на это фото", callback_data="same_photo")
     builder.button(text="🆕 Новое фото", callback_data="new_photo")
-    builder.button(text="⭐ Оценить", callback_data="rate")
     builder.adjust(1, 2)
+    return builder.as_markup()
+
+def get_animation_type_kb():
+    """Выбор типа анимации"""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="↩️ Лёгкий поворот (3 сек)", callback_data="anim_turn")
+    builder.button(text="🚶 Шаг вперёд (3 сек)", callback_data="anim_step")
+    builder.button(text="💃 Модельная походка (5 сек)", callback_data="anim_walk")
+    builder.button(text="❌ Отмена", callback_data="anim_cancel")
+    builder.adjust(1)
     return builder.as_markup()
 
 # --- ОБРАБОТЧИКИ КОМАНД ---
@@ -98,30 +109,43 @@ async def start(message: types.Message):
 async def profile(message: types.Message):
     user = await db.get_user(message.from_user.id)
     status = "👑 Администратор" if user['is_admin'] else "👤 Пользователь"
+    balance_rub = user['balance'] / 100  # Копейки в рубли
+    
+    # Рассчитываем доступное количество
+    photos_available = int(balance_rub / 50)
+    videos_available = int(balance_rub / 100)
     
     profile_text = (
         f"<b>📱 Твой профиль</b>\n\n"
         f"🆔 ID: <code>{message.from_user.id}</code>\n"
-        f"🔋 Баланс: <b>{user['balance']}</b> примерок\n"
-        f"✨ Всего создано: <b>{user['total_generations']}</b>\n"
+        f"💰 Баланс: <b>{balance_rub:.0f}₽</b>\n\n"
+        f"📊 <b>Доступно:</b>\n"
+        f"   📸 ~{photos_available} фото примерок\n"
+        f"   🎬 ~{videos_available} видео анимаций\n\n"
+        f"📈 <b>Создано:</b>\n"
+        f"   📸 Фото: <b>{user['total_generations']}</b>\n"
+        f"   🎬 Видео: <b>{user.get('total_videos', 0)}</b>\n\n"
         f"⭐ Статус: {status}\n\n"
+        f"💡 <i>Фото = 50₽ | Видео = 100₽</i>"
     )
     
-    if user['balance'] == 0:
-        profile_text += "⚠️ У тебя закончились примерки!\nНажми 💎 Купить примерки"
+    if user['balance'] < 5000:
+        profile_text += "\n\n⚠️ Недостаточно средств для примерки!\nПополни баланс 👇"
     
     await message.answer(profile_text)
 
 @dp.message(F.text == "💎 Купить примерки")
 async def show_packages(message: types.Message):
     packages_text = (
-        "💎 <b>Выбери пакет примерок:</b>\n\n"
-        "🔹 <b>5 примерок</b> - 250₽ (50₽/шт)\n"
-        "   Попробовать сервис\n\n"
-        "⭐ <b>15 примерок</b> - 600₽ (40₽/шт)\n"
-        "   Популярный выбор! Выгода 20%\n\n"
-        "💎 <b>50 примерок</b> - 1500₽ (30₽/шт)\n"
-        "   Максимальная выгода 40%!\n\n"
+        "💎 <b>Пополни баланс:</b>\n\n"
+        "🔹 <b>250₽</b>\n"
+        "   → 5 фото примерок (50₽/шт)\n\n"
+        "⭐ <b>500₽</b> - Выгодно!\n"
+        "   → 12 фото или 5 видео (40₽/шт)\n\n"
+        "💎 <b>1000₽</b> - Максимум!\n"
+        "   → 25 фото или 10 видео (40₽/шт)\n\n"
+        "💡 <i>Фото примерка: 50₽</i>\n"
+        "💡 <i>Видео анимация: 100₽</i>\n\n"
         "Оплата через ЮKassa - быстро и безопасно 🔒"
     )
     
@@ -146,8 +170,7 @@ async def process_buy(callback: types.CallbackQuery):
     await db.create_payment(
         payment_data['payment_id'],
         callback.from_user.id,
-        payment_data['amount'],
-        payment_data['credits']
+        payment_data['amount']
     )
     
     builder = InlineKeyboardBuilder()
@@ -157,8 +180,7 @@ async def process_buy(callback: types.CallbackQuery):
     
     await callback.message.answer(
         f"💳 <b>Платеж создан!</b>\n\n"
-        f"Сумма: <b>{payment_data['amount'] / 100:.0f}₽</b>\n"
-        f"Примерок: <b>{payment_data['credits']}</b>\n\n"
+        f"Сумма: <b>{payment_data['amount'] / 100:.0f}₽</b>\n\n"
         f"Нажми кнопку ниже для оплаты:",
         reply_markup=builder.as_markup()
     )
@@ -177,9 +199,10 @@ async def check_payment(callback: types.CallbackQuery):
     if status['status'] == 'succeeded' and status['paid']:
         payment = await db.confirm_payment(payment_id)
         if payment:
+            balance_added = payment['amount'] / 100
             await callback.message.answer(
                 f"✅ <b>Оплата прошла успешно!</b>\n\n"
-                f"На твой счет зачислено <b>{payment['credits']}</b> примерок!\n"
+                f"На твой баланс зачислено <b>{balance_added:.0f}₽</b>!\n"
                 f"Спасибо за покупку! 💚"
             )
             await callback.answer("✅ Оплата подтверждена!", show_alert=True)
@@ -227,9 +250,9 @@ async def my_generations(message: types.Message):
 @dp.message(Command("addbalance"))
 async def add_balance_command(message: types.Message):
     """
-    Команда для начисления примерок пользователю
-    Формат: /addbalance USER_ID AMOUNT
-    Пример: /addbalance 123456789 10
+    Команда для начисления баланса пользователю
+    Формат: /addbalance USER_ID СУММА_В_РУБЛЯХ
+    Пример: /addbalance 123456789 100 (начислит 100₽)
     """
     user = await db.get_user(message.from_user.id)
     if not user['is_admin']:
@@ -241,45 +264,47 @@ async def add_balance_command(message: types.Message):
         if len(parts) != 3:
             await message.answer(
                 "❌ <b>Неверный формат!</b>\n\n"
-                "Используй: <code>/addbalance USER_ID КОЛИЧЕСТВО</code>\n\n"
-                "Пример: <code>/addbalance 123456789 10</code>"
+                "Используй: <code>/addbalance USER_ID СУММА</code>\n\n"
+                "Пример: <code>/addbalance 123456789 100</code> (начислит 100₽)"
             )
             return
         
         target_user_id = int(parts[1])
-        amount = int(parts[2])
+        amount_rub = int(parts[2])
+        amount_kopeks = amount_rub * 100  # Переводим в копейки
         
         # Проверяем, существует ли пользователь
         target_user = await db.get_user(target_user_id)
         
         # Начисляем баланс
-        await db.update_balance(target_user_id, amount)
+        await db.update_balance(target_user_id, amount_kopeks)
         
         # Получаем обновленные данные
         updated_user = await db.get_user(target_user_id)
+        new_balance = updated_user['balance'] / 100
         
         await message.answer(
             f"✅ <b>Баланс начислен!</b>\n\n"
             f"👤 Пользователь: <code>{target_user_id}</code>\n"
-            f"➕ Начислено: <b>{amount}</b> примерок\n"
-            f"💰 Новый баланс: <b>{updated_user['balance']}</b>"
+            f"➕ Начислено: <b>{amount_rub}₽</b>\n"
+            f"💰 Новый баланс: <b>{new_balance:.0f}₽</b>"
         )
         
-        # Уведомляем пользователя (опционально)
+        # Уведомляем пользователя
         try:
             await bot.send_message(
                 target_user_id,
-                f"🎁 <b>Тебе начислено {amount} примерок!</b>\n\n"
-                f"Твой новый баланс: <b>{updated_user['balance']}</b> примерок\n"
+                f"🎁 <b>Тебе начислено {amount_rub}₽!</b>\n\n"
+                f"Твой новый баланс: <b>{new_balance:.0f}₽</b>\n"
                 f"Спасибо, что пользуешься нашим сервисом! 💚"
             )
         except:
-            pass  # Если не удалось отправить уведомление - не критично
+            pass
             
     except ValueError:
         await message.answer(
             "❌ <b>Ошибка!</b>\n\n"
-            "USER_ID и КОЛИЧЕСТВО должны быть числами"
+            "USER_ID и СУММА должны быть числами"
         )
     except Exception as e:
         await message.answer(f"❌ Произошла ошибка: {str(e)}")
@@ -303,7 +328,8 @@ async def admin_panel(message: types.Message):
         f"✨ Примерок создано: <b>{stats['generations']}</b>\n"
         f"💰 Выручка: <b>{stats['revenue']:.0f}₽</b>\n\n"
         f"<b>Команды:</b>\n"
-        f"• <code>/addbalance USER_ID AMOUNT</code> - начислить примерки",
+        f"• <code>/addbalance USER_ID СУММА</code> - начислить рубли\n"
+        f"  Пример: /addbalance 123456789 100",
         reply_markup=builder.as_markup()
     )
 
@@ -350,13 +376,16 @@ async def perform_broadcast(message: types.Message, state: FSMContext):
 async def start_vton(message: types.Message, state: FSMContext):
     user = await db.get_user(message.from_user.id)
     
-    if user['balance'] <= 0 and not user['is_admin']:
+    # Проверяем баланс: нужно минимум 50₽ (5000 копеек)
+    if user['balance'] < 5000 and not user['is_admin']:
         builder = InlineKeyboardBuilder()
-        builder.button(text="💎 Купить примерки", callback_data="buy_5_pack")
+        builder.button(text="💎 Пополнить баланс", callback_data="buy_250_pack")
         
         await message.answer(
-            "😔 <b>У тебя закончились примерки!</b>\n\n"
-            "Купи пакет, чтобы продолжить создавать крутые образы:",
+            "😔 <b>Недостаточно средств!</b>\n\n"
+            f"💰 Твой баланс: <b>{user['balance'] / 100:.0f}₽</b>\n"
+            f"💡 Нужно минимум: <b>50₽</b>\n\n"
+            "Пополни баланс, чтобы создавать крутые образы:",
             reply_markup=builder.as_markup()
         )
         return
@@ -365,7 +394,8 @@ async def start_vton(message: types.Message, state: FSMContext):
     await message.answer(
         "📸 <b>Шаг 1 из 3: Твоё фото</b>\n\n"
         "Отправь фото человека (в полный рост или по пояс).\n\n"
-        "💡 <i>Совет: Лучше работает на фото с однотонным фоном</i>"
+        "💡 <i>Совет: Лучше работает на фото с однотонным фоном</i>\n"
+        "💰 <i>Стоимость: 50₽</i>"
     )
     await state.set_state(VTONState.wait_human)
 
@@ -410,7 +440,8 @@ async def garment_step(message: types.Message, state: FSMContext):
     status_msg = await message.answer(
         "✨ <b>Создаю твой образ...</b>\n\n"
         "⏳ Обычно это занимает 40-60 секунд\n"
-        "🎨 AI рисует реалистичную картинку"
+        "🎨 AI рисует реалистичную картинку\n"
+        "💰 Стоимость: 50₽"
     )
     
     try:
@@ -421,19 +452,21 @@ async def garment_step(message: types.Message, state: FSMContext):
         
         photo_res = requests.get(result_url).content
         
-        # Формируем подпись в зависимости от статуса
-        if user['is_admin']:
+        # Списываем 50₽ (5000 копеек) только у обычных пользователей
+        if not user['is_admin']:
+            await db.update_balance(message.from_user.id, -5000, is_video=False)
+            new_balance = (user['balance'] - 5000) / 100
             caption = (
-                "✨ <b>Твой образ готов!</b>\n\n"
-                "👑 У тебя безлимитные примерки (админ)\n"
-                "Нравится? Попробуй другую одежду!"
+                f"✨ <b>Твой образ готов!</b>\n\n"
+                f"💰 Баланс: <b>{new_balance:.0f}₽</b>\n\n"
+                f"💡 Хочешь оживить фото?\n"
+                f"Нажми 🎬 Создать видео (+100₽)"
             )
         else:
-            new_balance = user['balance'] - 1
             caption = (
                 "✨ <b>Твой образ готов!</b>\n\n"
-                "Нравится? Попробуй другую одежду!\n"
-                f"💰 Осталось примерок: <b>{new_balance}</b>"
+                "👑 У тебя безлимитный доступ (админ)\n"
+                "Попробуй другую одежду!"
             )
         
         await message.answer_photo(
@@ -441,16 +474,12 @@ async def garment_step(message: types.Message, state: FSMContext):
             caption=caption,
             reply_markup=get_result_actions()
         )
-        
-        # Списываем баланс только у обычных пользователей
-        if not user['is_admin']:
-            await db.update_balance(message.from_user.id, -1)
             
     except Exception as e:
         await message.answer(
             "❌ <b>Произошла ошибка</b>\n\n"
             "Попробуй другие фото или повтори попытку.\n"
-            "Примерка не была списана с баланса."
+            "Деньги не были списаны с баланса."
         )
         print(f"Ошибка генерации: {e}")
     finally:
@@ -482,16 +511,134 @@ async def new_photo_tryagain(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer(
         "📸 <b>Шаг 1 из 3: Твоё фото</b>\n\n"
         "Отправь фото человека (в полный рост или по пояс).\n\n"
-        "💡 <i>Совет: Лучше работает на фото с однотонным фоном</i>"
+        "💡 <i>Совет: Лучше работает на фото с однотонным фоном</i>\n"
+        "💰 <i>Стоимость: 50₽</i>"
     )
     await state.set_state(VTONState.wait_human)
     await callback.answer()
 
-@dp.callback_query(F.data == "rate")
-async def rate_result(callback: types.CallbackQuery):
-    await callback.answer("⭐ Спасибо за оценку!", show_alert=True)
+# --- СИСТЕМА СОЗДАНИЯ ВИДЕО ---
 
-# --- СИСТЕМА ПОДДЕРЖКИ ---
+@dp.callback_query(F.data == "create_video")
+async def start_video_creation(callback: types.CallbackQuery, state: FSMContext):
+    """Пользователь хочет создать видео"""
+    user = await db.get_user(callback.from_user.id)
+    
+    # Проверяем баланс: нужно 100₽ (10000 копеек)
+    if user['balance'] < 10000 and not user['is_admin']:
+        builder = InlineKeyboardBuilder()
+        builder.button(text="💎 Пополнить баланс", callback_data="buy_250_pack")
+        
+        await callback.message.answer(
+            "😔 <b>Недостаточно средств!</b>\n\n"
+            f"💰 Твой баланс: <b>{user['balance'] / 100:.0f}₽</b>\n"
+            f"💡 Нужно минимум: <b>100₽</b>\n\n"
+            "Пополни баланс для создания видео:",
+            reply_markup=builder.as_markup()
+        )
+        await callback.answer()
+        return
+    
+    # Проверяем, есть ли последний результат
+    if not user.get('last_result_url'):
+        await callback.answer("❌ Нет сохраненного результата примерки", show_alert=True)
+        return
+    
+    # Показываем выбор типа анимации
+    await callback.message.answer(
+        "🎬 <b>Создание видео-анимации</b>\n\n"
+        "Выбери тип движения:\n\n"
+        "↩️ <b>Лёгкий поворот</b> — элегантный разворот на 180°\n"
+        "🚶 <b>Шаг вперёд</b> — уверенный шаг к камере\n"
+        "💃 <b>Модельная походка</b> — движение как на подиуме\n\n"
+        "⏱ Создание займёт ~30-60 секунд\n"
+        "💰 Стоимость: <b>100₽</b>",
+        reply_markup=get_animation_type_kb()
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("anim_"))
+async def process_animation(callback: types.CallbackQuery, state: FSMContext):
+    """Обработка выбора типа анимации"""
+    
+    if callback.data == "anim_cancel":
+        await callback.message.edit_text("❌ Создание видео отменено")
+        await callback.answer()
+        return
+    
+    user = await db.get_user(callback.from_user.id)
+    
+    # Проверяем баланс ещё раз
+    if user['balance'] < 10000 and not user['is_admin']:
+        await callback.answer("❌ Недостаточно средств!", show_alert=True)
+        return
+    
+    # Определяем тип анимации
+    animation_map = {
+        "anim_turn": "turn",
+        "anim_step": "step", 
+        "anim_walk": "walk"
+    }
+    animation_type = animation_map.get(callback.data, "turn")
+    animation_names = {
+        "turn": "Лёгкий поворот",
+        "step": "Шаг вперёд",
+        "walk": "Модельная походка"
+    }
+    
+    # Обновляем сообщение на статус создания
+    await callback.message.edit_text(
+        f"🎬 <b>Создаю анимацию...</b>\n\n"
+        f"Тип: {animation_names[animation_type]}\n"
+        f"⏳ Обычно это занимает 30-60 секунд\n"
+        f"🎨 AI создаёт реалистичное видео"
+    )
+    
+    try:
+        # Генерируем видео
+        video_url = await animate_image(user['last_result_url'], animation_type)
+        
+        # Скачиваем видео
+        import requests
+        video_data = requests.get(video_url).content
+        
+        # Списываем 100₽ (10000 копеек) только у обычных пользователей
+        if not user['is_admin']:
+            await db.update_balance(callback.from_user.id, -10000, is_video=True)
+            new_balance = (user['balance'] - 10000) / 100
+            caption = (
+                f"✨ <b>Твоё видео готово!</b>\n\n"
+                f"Тип: {animation_names[animation_type]}\n"
+                f"💰 Баланс: <b>{new_balance:.0f}₽</b>"
+            )
+        else:
+            caption = (
+                f"✨ <b>Твоё видео готово!</b>\n\n"
+                f"Тип: {animation_names[animation_type]}\n"
+                f"👑 Безлимитный доступ (админ)"
+            )
+        
+        # Отправляем видео
+        await callback.message.answer_video(
+            types.BufferedInputFile(video_data, filename="animation.mp4"),
+            caption=caption,
+            reply_markup=get_result_actions()
+        )
+        
+        # Удаляем статусное сообщение
+        await callback.message.delete()
+        await callback.answer("✅ Видео создано!", show_alert=True)
+        
+    except Exception as e:
+        await callback.message.edit_text(
+            "❌ <b>Произошла ошибка</b>\n\n"
+            "Попробуйте ещё раз или создайте новую примерку.\n"
+            "Деньги не были списаны."
+        )
+        print(f"Ошибка создания видео: {e}")
+        await callback.answer()
+
+# --- ADMIN PANEL (keeping existing code) ---
 
 @dp.message(F.text == "💬 Поддержка")
 async def support_start(message: types.Message, state: FSMContext):
@@ -508,6 +655,7 @@ async def support_start(message: types.Message, state: FSMContext):
 async def support_message_received(message: types.Message, state: FSMContext):
     """Пользователь отправил сообщение в поддержку"""
     user = await db.get_user(message.from_user.id)
+    balance_rub = user['balance'] / 100
     
     # Формируем сообщение для админа
     admin_text = (
@@ -515,7 +663,7 @@ async def support_message_received(message: types.Message, state: FSMContext):
         f"👤 От: {message.from_user.first_name or 'Пользователь'}\n"
         f"🆔 ID: <code>{message.from_user.id}</code>\n"
         f"👤 Username: @{message.from_user.username or 'нет'}\n"
-        f"💰 Баланс: {user['balance']} примерок\n\n"
+        f"💰 Баланс: {balance_rub:.0f}₽\n\n"
         f"📝 <b>Сообщение:</b>\n{message.text}"
     )
     
