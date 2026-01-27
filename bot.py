@@ -221,6 +221,66 @@ async def my_generations(message: types.Message):
 
 # --- АДМИН-ПАНЕЛЬ ---
 
+@dp.message(Command("addbalance"))
+async def add_balance_command(message: types.Message):
+    """
+    Команда для начисления примерок пользователю
+    Формат: /addbalance USER_ID AMOUNT
+    Пример: /addbalance 123456789 10
+    """
+    user = await db.get_user(message.from_user.id)
+    if not user['is_admin']:
+        await message.answer("❌ Доступно только администраторам")
+        return
+    
+    try:
+        parts = message.text.split()
+        if len(parts) != 3:
+            await message.answer(
+                "❌ <b>Неверный формат!</b>\n\n"
+                "Используй: <code>/addbalance USER_ID КОЛИЧЕСТВО</code>\n\n"
+                "Пример: <code>/addbalance 123456789 10</code>"
+            )
+            return
+        
+        target_user_id = int(parts[1])
+        amount = int(parts[2])
+        
+        # Проверяем, существует ли пользователь
+        target_user = await db.get_user(target_user_id)
+        
+        # Начисляем баланс
+        await db.update_balance(target_user_id, amount)
+        
+        # Получаем обновленные данные
+        updated_user = await db.get_user(target_user_id)
+        
+        await message.answer(
+            f"✅ <b>Баланс начислен!</b>\n\n"
+            f"👤 Пользователь: <code>{target_user_id}</code>\n"
+            f"➕ Начислено: <b>{amount}</b> примерок\n"
+            f"💰 Новый баланс: <b>{updated_user['balance']}</b>"
+        )
+        
+        # Уведомляем пользователя (опционально)
+        try:
+            await bot.send_message(
+                target_user_id,
+                f"🎁 <b>Тебе начислено {amount} примерок!</b>\n\n"
+                f"Твой новый баланс: <b>{updated_user['balance']}</b> примерок\n"
+                f"Спасибо, что пользуешься нашим сервисом! 💚"
+            )
+        except:
+            pass  # Если не удалось отправить уведомление - не критично
+            
+    except ValueError:
+        await message.answer(
+            "❌ <b>Ошибка!</b>\n\n"
+            "USER_ID и КОЛИЧЕСТВО должны быть числами"
+        )
+    except Exception as e:
+        await message.answer(f"❌ Произошла ошибка: {str(e)}")
+
 @dp.message(Command("admin"))
 async def admin_panel(message: types.Message):
     user = await db.get_user(message.from_user.id)
@@ -238,7 +298,9 @@ async def admin_panel(message: types.Message):
         f"<b>⚙️ Панель администратора</b>\n\n"
         f"👥 Пользователей: <b>{stats['users']}</b>\n"
         f"✨ Примерок создано: <b>{stats['generations']}</b>\n"
-        f"💰 Выручка: <b>{stats['revenue']:.0f}₽</b>",
+        f"💰 Выручка: <b>{stats['revenue']:.0f}₽</b>\n\n"
+        f"<b>Команды:</b>\n"
+        f"• <code>/addbalance USER_ID AMOUNT</code> - начислить примерки",
         reply_markup=builder.as_markup()
     )
 
@@ -352,16 +414,29 @@ async def garment_step(message: types.Message, state: FSMContext):
         await db.save_generation(message.from_user.id, data['category'], result_url)
         
         photo_res = requests.get(result_url).content
-        await message.answer_photo(
-            types.BufferedInputFile(photo_res, filename="result.jpg"),
-            caption=(
+        
+        # Формируем подпись в зависимости от статуса
+        if user['is_admin']:
+            caption = (
+                "✨ <b>Твой образ готов!</b>\n\n"
+                "👑 У тебя безлимитные примерки (админ)\n"
+                "Нравится? Попробуй другую одежду!"
+            )
+        else:
+            new_balance = user['balance'] - 1
+            caption = (
                 "✨ <b>Твой образ готов!</b>\n\n"
                 "Нравится? Попробуй другую одежду!\n"
-                f"Осталось примерок: <b>{user['balance'] - 1}</b>"
-            ),
+                f"💰 Осталось примерок: <b>{new_balance}</b>"
+            )
+        
+        await message.answer_photo(
+            types.BufferedInputFile(photo_res, filename="result.jpg"),
+            caption=caption,
             reply_markup=get_result_actions()
         )
         
+        # Списываем баланс только у обычных пользователей
         if not user['is_admin']:
             await db.update_balance(message.from_user.id, -1)
             
