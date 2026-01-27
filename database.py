@@ -55,6 +55,15 @@ async def init_db():
         ON CONFLICT (user_id) DO UPDATE SET is_admin = TRUE, balance = 999
     """)
     
+    # Миграция: добавляем колонку last_human_photo если её нет
+    try:
+        await conn.execute("""
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS last_human_photo TEXT;
+        """)
+        print("Миграция: колонка last_human_photo добавлена")
+    except Exception as e:
+        print(f"Миграция: {e}")
+    
     await conn.close()
     print("БД проинициализирована успешно")
 
