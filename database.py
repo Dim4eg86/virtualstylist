@@ -16,10 +16,11 @@ async def init_db():
     await conn.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id BIGINT PRIMARY KEY,
-            balance INT DEFAULT 1,
+            balance INT DEFAULT 0,
             is_admin BOOLEAN DEFAULT FALSE,
             created_at TIMESTAMP DEFAULT NOW(),
-            total_generations INT DEFAULT 0
+            total_generations INT DEFAULT 0,
+            last_human_photo TEXT
         );
     ''')
     
@@ -130,3 +131,12 @@ async def get_stats():
         'generations': total_gens,
         'revenue': total_revenue / 100 if total_revenue else 0
     }
+
+async def save_last_human_photo(user_id, photo_url):
+    """Сохраняет последнее фото человека для быстрой повторной примерки"""
+    conn = await asyncpg.connect(DATABASE_URL)
+    await conn.execute(
+        "UPDATE users SET last_human_photo = $1 WHERE user_id = $2",
+        photo_url, user_id
+    )
+    await conn.close()
