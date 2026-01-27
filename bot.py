@@ -356,6 +356,20 @@ async def make_admin(message: types.Message):
         "Перезапусти бота: /start"
     )
 
+@dp.message(Command("checkadmin"))
+async def check_admin(message: types.Message):
+    """Проверка статуса администратора"""
+    user = await db.get_user(message.from_user.id)
+    
+    await message.answer(
+        f"<b>🔍 Проверка статуса:</b>\n\n"
+        f"🆔 User ID: <code>{message.from_user.id}</code>\n"
+        f"👑 is_admin: <code>{user.get('is_admin', False)}</code>\n"
+        f"💰 Баланс: <code>{user['balance']} копеек = {user['balance']/100:.0f}₽</code>\n"
+        f"📊 Тип данных is_admin: <code>{type(user.get('is_admin'))}</code>\n\n"
+        f"<b>Полные данные:</b>\n<code>{dict(user)}</code>"
+    )
+
 @dp.callback_query(F.data == "admin_stats")
 async def admin_stats(callback: types.CallbackQuery):
     stats = await db.get_stats()
