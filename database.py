@@ -1,6 +1,7 @@
 import asyncpg
 import os
 import asyncio
+from datetime import datetime
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
@@ -10,19 +11,49 @@ async def init_db():
         return
         
     conn = await asyncpg.connect(DATABASE_URL)
+    
+    # Таблица пользователей
     await conn.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id BIGINT PRIMARY KEY,
             balance INT DEFAULT 1,
-            is_admin BOOLEAN DEFAULT FALSE
+            is_admin BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT NOW(),
+            total_generations INT DEFAULT 0
         );
     ''')
+    
+    # Таблица платежей
+    await conn.execute('''
+        CREATE TABLE IF NOT EXISTS payments (
+            payment_id TEXT PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            amount INT NOT NULL,
+            credits INT NOT NULL,
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT NOW(),
+            paid_at TIMESTAMP
+        );
+    ''')
+    
+    # Таблица истории примерок
+    await conn.execute('''
+        CREATE TABLE IF NOT EXISTS generations (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            category TEXT NOT NULL,
+            result_url TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+    ''')
+    
     # Твой ID 610820340 — делаем админом
     await conn.execute("""
         INSERT INTO users (user_id, is_admin, balance) 
         VALUES (610820340, TRUE, 999) 
         ON CONFLICT (user_id) DO UPDATE SET is_admin = TRUE, balance = 999
     """)
+    
     await conn.close()
     print("БД проинициализирована успешно")
 
@@ -38,4 +69,64 @@ async def get_user(user_id):
 async def update_balance(user_id, amount):
     conn = await asyncpg.connect(DATABASE_URL)
     await conn.execute("UPDATE users SET balance = balance + $1 WHERE user_id = $2", amount, user_id)
+    if amount < 0:
+        await conn.execute("UPDATE users SET total_generations = total_generations + 1 WHERE user_id = $1", user_id)
     await conn.close()
+
+async def create_payment(payment_id, user_id, amount, credits):
+    conn = await asyncpg.connect(DATABASE_URL)
+    await conn.execute(
+        "INSERT INTO payments (payment_id, user_id, amount, credits) VALUES ($1, $2, $3, $4)",
+        payment_id, user_id, amount, credits
+    )
+    await conn.close()
+
+async def get_payment(payment_id):
+    conn = await asyncpg.connect(DATABASE_URL)
+    payment = await conn.fetchrow("SELECT * FROM payments WHERE payment_id = $1", payment_id)
+    await conn.close()
+    return payment
+
+async def confirm_payment(payment_id):
+    conn = await asyncpg.connect(DATABASE_URL)
+    payment = await conn.fetchrow("SELECT * FROM payments WHERE payment_id = $1", payment_id)
+    if payment and payment['status'] == 'pending':
+        await conn.execute(
+            "UPDATE payments SET status = 'paid', paid_at = NOW() WHERE payment_id = $1",
+            payment_id
+        )
+        await conn.execute(
+            "UPDATE users SET balance = balance + $1 WHERE user_id = $2",
+            payment['credits'], payment['user_id']
+        )
+    await conn.close()
+    return payment
+
+async def save_generation(user_id, category, result_url):
+    conn = await asyncpg.connect(DATABASE_URL)
+    await conn.execute(
+        "INSERT INTO generations (user_id, category, result_url) VALUES ($1, $2, $3)",
+        user_id, category, result_url
+    )
+    await conn.close()
+
+async def get_user_generations(user_id, limit=10):
+    conn = await asyncpg.connect(DATABASE_URL)
+    gens = await conn.fetch(
+        "SELECT * FROM generations WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
+        user_id, limit
+    )
+    await conn.close()
+    return gens
+
+async def get_stats():
+    conn = await asyncpg.connect(DATABASE_URL)
+    total_users = await conn.fetchval("SELECT COUNT(*) FROM users")
+    total_gens = await conn.fetchval("SELECT COUNT(*) FROM generations")
+    total_revenue = await conn.fetchval("SELECT COALESCE(SUM(amount), 0) FROM payments WHERE status = 'paid'")
+    await conn.close()
+    return {
+        'users': total_users,
+        'generations': total_gens,
+        'revenue': total_revenue / 100 if total_revenue else 0
+    }
