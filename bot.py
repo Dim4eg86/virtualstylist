@@ -333,6 +333,29 @@ async def admin_panel(message: types.Message):
         reply_markup=builder.as_markup()
     )
 
+@dp.message(Command("makeadmin"))
+async def make_admin(message: types.Message):
+    """Экстренная команда для установки админ-статуса"""
+    # Только для твоего ID
+    if message.from_user.id != 610820340:
+        return
+    
+    conn = await db.asyncpg.connect(db.DATABASE_URL)
+    await conn.execute("""
+        UPDATE users 
+        SET is_admin = TRUE, balance = GREATEST(balance, 10000000)
+        WHERE user_id = 610820340
+    """)
+    await conn.close()
+    
+    await message.answer(
+        "✅ <b>Админ-статус установлен!</b>\n\n"
+        "👑 Теперь ты администратор\n"
+        "💰 Баланс пополнен до 100000₽\n"
+        "🎯 Цены: фото 1₽, видео 1₽\n\n"
+        "Перезапусти бота: /start"
+    )
+
 @dp.callback_query(F.data == "admin_stats")
 async def admin_stats(callback: types.CallbackQuery):
     stats = await db.get_stats()
