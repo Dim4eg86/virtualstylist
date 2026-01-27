@@ -485,15 +485,20 @@ async def garment_step(message: types.Message, state: FSMContext):
     user = await db.get_user(message.from_user.id)
     data = await state.get_data()
     
+    # DEBUG: Проверяем статус админа
+    print(f"DEBUG garment_step: user_id={message.from_user.id}, is_admin={user.get('is_admin')}, balance={user['balance']}")
+    
     file_id = message.photo[-1].file_id
     file = await bot.get_file(file_id)
     garment_url = f"https://api.telegram.org/file/bot{os.getenv('BOT_TOKEN')}/{file.file_path}"
+    
+    price_text = "1₽ (админ-режим)" if user.get('is_admin') else "50₽"
     
     status_msg = await message.answer(
         "✨ <b>Создаю твой образ...</b>\n\n"
         "⏳ Обычно это занимает 40-60 секунд\n"
         "🎨 AI рисует реалистичную картинку\n"
-        "💰 Стоимость: 50₽"
+        f"💰 Стоимость: {price_text}"
     )
     
     try:
@@ -505,7 +510,7 @@ async def garment_step(message: types.Message, state: FSMContext):
         photo_res = requests.get(result_url).content
         
         # Списываем 50₽ (5000 копеек) только у обычных пользователей
-        if not user['is_admin']:
+        if not user.get('is_admin', False):
             await db.update_balance(message.from_user.id, -5000, is_video=False)
             new_balance = (user['balance'] - 5000) / 100
             caption = (
@@ -514,6 +519,7 @@ async def garment_step(message: types.Message, state: FSMContext):
                 f"💡 Хочешь оживить фото?\n"
                 f"Нажми 🎬 Создать видео (+100₽)"
             )
+            print(f"DEBUG: Обычный пользователь, списано 50₽")
         else:
             # Админ платит 1₽ для тестирования
             await db.update_balance(message.from_user.id, -100, is_video=False)
@@ -525,6 +531,7 @@ async def garment_step(message: types.Message, state: FSMContext):
                 f"💡 Хочешь оживить фото?\n"
                 f"Нажми 🎬 Создать видео (+1₽)"
             )
+            print(f"DEBUG: Админ, списан 1₽")
         
         await message.answer_photo(
             types.BufferedInputFile(photo_res, filename="result.jpg"),
