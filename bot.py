@@ -28,6 +28,8 @@ class VTONState(StatesGroup):
     wait_category = State()
     wait_garment = State()
     wait_broadcast = State()
+    wait_support_message = State()
+    wait_admin_reply = State()  # Новое состояние для ответа админа
 
 # --- КЛАВИАТУРЫ ---
 
@@ -38,7 +40,8 @@ def get_main_menu():
     builder.button(text="📊 Мои примерки")
     builder.button(text="💎 Купить примерки")
     builder.button(text="👤 Профиль")
-    builder.adjust(2, 2)
+    builder.button(text="💬 Поддержка")
+    builder.adjust(2, 2, 1)
     return builder.as_markup(resize_keyboard=True)
 
 def get_category_kb():
@@ -66,9 +69,10 @@ def get_packages_kb():
 def get_result_actions():
     """Действия после генерации"""
     builder = InlineKeyboardBuilder()
-    builder.button(text="🔄 Еще раз", callback_data="again")
+    builder.button(text="🔄 Другую одежду на это фото", callback_data="same_photo")
+    builder.button(text="🆕 Новое фото", callback_data="new_photo")
     builder.button(text="⭐ Оценить", callback_data="rate")
-    builder.adjust(2)
+    builder.adjust(1, 2)
     return builder.as_markup()
 
 # --- ОБРАБОТЧИКИ КОМАНД ---
@@ -83,8 +87,7 @@ async def start(message: types.Message):
         "• Примеряю любую одежду по фото за 60 секунд\n"
         "• Работаю с AI-технологией последнего поколения\n"
         "• Создаю реалистичные фотографии\n\n"
-        "🎁 <b>Первая примерка — БЕСПЛАТНО!</b>\n\n"
-        "Просто отправь своё фото и фото одежды — "
+        "✨ Просто отправь своё фото и фото одежды — "
         "я покажу, как это будет выглядеть на тебе!\n\n"
         "📱 Используй меню ниже, чтобы начать ⤵️"
     )
@@ -372,7 +375,10 @@ async def human_step(message: types.Message, state: FSMContext):
     file = await bot.get_file(file_id)
     url = f"https://api.telegram.org/file/bot{os.getenv('BOT_TOKEN')}/{file.file_path}"
     
+    # Сохраняем URL фото в состоянии и в БД
     await state.update_data(human=url)
+    await db.save_last_human_photo(message.from_user.id, url)
+    
     await message.answer(
         "👗 <b>Шаг 2 из 3: Категория</b>\n\n"
         "Выбери, что хочешь примерить:",
@@ -452,10 +458,31 @@ async def garment_step(message: types.Message, state: FSMContext):
             await status_msg.delete()
         await state.clear()
 
-@dp.callback_query(F.data == "again")
-async def try_again(callback: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data == "same_photo")
+async def same_photo_tryagain(callback: types.CallbackQuery, state: FSMContext):
+    """Примерка другой одежды на то же фото"""
+    user = await db.get_user(callback.from_user.id)
+    
+    if not user['last_human_photo']:
+        await callback.answer("❌ Нет сохраненного фото. Загрузите новое.", show_alert=True)
+        return
+    
+    # Загружаем последнее фото в состояние
+    await state.update_data(human=user['last_human_photo'])
+    
     await callback.message.answer(
-        "📸 Отправь новое фото человека для примерки:"
+        "👗 <b>Выбери категорию одежды:</b>",
+        reply_markup=get_category_kb()
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "new_photo")
+async def new_photo_tryagain(callback: types.CallbackQuery, state: FSMContext):
+    """Начать примерку с нового фото"""
+    await callback.message.answer(
+        "📸 <b>Шаг 1 из 3: Твоё фото</b>\n\n"
+        "Отправь фото человека (в полный рост или по пояс).\n\n"
+        "💡 <i>Совет: Лучше работает на фото с однотонным фоном</i>"
     )
     await state.set_state(VTONState.wait_human)
     await callback.answer()
@@ -463,6 +490,172 @@ async def try_again(callback: types.CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "rate")
 async def rate_result(callback: types.CallbackQuery):
     await callback.answer("⭐ Спасибо за оценку!", show_alert=True)
+
+# --- СИСТЕМА ПОДДЕРЖКИ ---
+
+@dp.message(F.text == "💬 Поддержка")
+async def support_start(message: types.Message, state: FSMContext):
+    """Начало диалога с поддержкой"""
+    await message.answer(
+        "💬 <b>Служба поддержки</b>\n\n"
+        "Опишите вашу проблему или задайте вопрос.\n"
+        "Администратор ответит в ближайшее время.\n\n"
+        "Напишите ваше сообщение:"
+    )
+    await state.set_state(VTONState.wait_support_message)
+
+@dp.message(VTONState.wait_support_message)
+async def support_message_received(message: types.Message, state: FSMContext):
+    """Пользователь отправил сообщение в поддержку"""
+    user = await db.get_user(message.from_user.id)
+    
+    # Формируем сообщение для админа
+    admin_text = (
+        f"💬 <b>Новое обращение в поддержку</b>\n\n"
+        f"👤 От: {message.from_user.first_name or 'Пользователь'}\n"
+        f"🆔 ID: <code>{message.from_user.id}</code>\n"
+        f"👤 Username: @{message.from_user.username or 'нет'}\n"
+        f"💰 Баланс: {user['balance']} примерок\n\n"
+        f"📝 <b>Сообщение:</b>\n{message.text}"
+    )
+    
+    # Кнопка для ответа
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✍️ Написать ответ", callback_data=f"reply_{message.from_user.id}")
+    
+    # Отправляем админу (твой ID)
+    try:
+        await bot.send_message(610820340, admin_text, reply_markup=builder.as_markup())
+        await message.answer(
+            "✅ <b>Ваше сообщение отправлено!</b>\n\n"
+            "Администратор ответит в ближайшее время.",
+            reply_markup=get_main_menu()
+        )
+    except Exception as e:
+        await message.answer(
+            "❌ Ошибка отправки сообщения. Попробуйте позже.",
+            reply_markup=get_main_menu()
+        )
+        print(f"Ошибка отправки в поддержку: {e}")
+    
+    await state.clear()
+
+@dp.callback_query(F.data.startswith("reply_"))
+async def admin_reply_button(callback: types.CallbackQuery, state: FSMContext):
+    """Админ нажал кнопку 'Написать ответ'"""
+    user = await db.get_user(callback.from_user.id)
+    if not user['is_admin']:
+        await callback.answer("❌ Доступно только администраторам", show_alert=True)
+        return
+    
+    user_id = int(callback.data.replace("reply_", ""))
+    
+    # Сохраняем ID пользователя в состояние
+    await state.update_data(reply_to_user=user_id)
+    await state.set_state(VTONState.wait_admin_reply)
+    
+    await callback.message.answer(
+        f"✍️ <b>Напиши ответ для пользователя</b> <code>{user_id}</code>\n\n"
+        f"Твоё сообщение будет отправлено ему в бот.\n"
+        f"Отправь /cancel для отмены."
+    )
+    await callback.answer()
+
+@dp.message(VTONState.wait_admin_reply)
+async def admin_send_reply(message: types.Message, state: FSMContext):
+    """Админ отправляет ответ пользователю"""
+    if message.text == "/cancel":
+        await state.clear()
+        await message.answer("❌ Ответ отменён.")
+        return
+    
+    data = await state.get_data()
+    target_user_id = data.get('reply_to_user')
+    
+    if not target_user_id:
+        await message.answer("❌ Ошибка: не найден ID пользователя")
+        await state.clear()
+        return
+    
+    try:
+        # Отправляем ответ пользователю с кнопкой для продолжения диалога
+        user_builder = InlineKeyboardBuilder()
+        user_builder.button(text="💬 Ответить", callback_data="continue_support")
+        
+        await bot.send_message(
+            target_user_id,
+            f"💬 <b>Ответ от службы поддержки:</b>\n\n{message.text}",
+            reply_markup=user_builder.as_markup()
+        )
+        
+        # Подтверждаем админу с возможностью продолжить диалог
+        admin_builder = InlineKeyboardBuilder()
+        admin_builder.button(text="✍️ Написать ещё", callback_data=f"reply_{target_user_id}")
+        
+        await message.answer(
+            f"✅ Ответ отправлен пользователю <code>{target_user_id}</code>",
+            reply_markup=admin_builder.as_markup()
+        )
+        
+    except Exception as e:
+        await message.answer(f"❌ Ошибка отправки: {str(e)}")
+    
+    await state.clear()
+
+@dp.callback_query(F.data == "continue_support")
+async def user_continue_support(callback: types.CallbackQuery, state: FSMContext):
+    """Пользователь хочет продолжить диалог с поддержкой"""
+    await callback.message.answer(
+        "💬 <b>Продолжение диалога</b>\n\n"
+        "Напишите ваше сообщение:"
+    )
+    await state.set_state(VTONState.wait_support_message)
+    await callback.answer()
+
+@dp.message(Command("reply"))
+async def admin_reply_command(message: types.Message):
+    """Альтернативный способ - админ отвечает через команду (если кнопка не работает)"""
+    user = await db.get_user(message.from_user.id)
+    if not user['is_admin']:
+        return
+    
+    try:
+        parts = message.text.split(maxsplit=2)
+        if len(parts) < 3:
+            await message.answer(
+                "❌ <b>Неверный формат!</b>\n\n"
+                "Используй: <code>/reply USER_ID текст ответа</code>\n\n"
+                "Пример: <code>/reply 123456789 Здравствуйте! Ваша проблема решена.</code>\n\n"
+                "💡 Или используй кнопку '✍️ Написать ответ' под сообщением пользователя."
+            )
+            return
+        
+        target_user_id = int(parts[1])
+        reply_text = parts[2]
+        
+        # Отправляем ответ пользователю с кнопкой
+        user_builder = InlineKeyboardBuilder()
+        user_builder.button(text="💬 Ответить", callback_data="continue_support")
+        
+        await bot.send_message(
+            target_user_id,
+            f"💬 <b>Ответ от службы поддержки:</b>\n\n{reply_text}",
+            reply_markup=user_builder.as_markup()
+        )
+        
+        # Подтверждаем админу
+        admin_builder = InlineKeyboardBuilder()
+        admin_builder.button(text="✍️ Написать ещё", callback_data=f"reply_{target_user_id}")
+        
+        await message.answer(
+            f"✅ Ответ отправлен пользователю <code>{target_user_id}</code>",
+            reply_markup=admin_builder.as_markup()
+        )
+        
+    except ValueError:
+        await message.answer("❌ USER_ID должен быть числом")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка отправки: {str(e)}")
 
 # --- WEBHOOK ДЛЯ ЮKASSA (если будешь использовать) ---
 
