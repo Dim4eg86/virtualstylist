@@ -20,7 +20,9 @@ async def init_db():
             is_admin BOOLEAN DEFAULT FALSE,
             created_at TIMESTAMP DEFAULT NOW(),
             total_generations INT DEFAULT 0,
-            last_human_photo TEXT
+            total_videos INT DEFAULT 0,
+            last_human_photo TEXT,
+            last_result_url TEXT
         );
     ''')
     
@@ -48,11 +50,11 @@ async def init_db():
         );
     ''')
     
-    # Твой ID 610820340 — делаем админом
+    # Твой ID 610820340 — делаем админом с балансом 100000₽
     await conn.execute("""
         INSERT INTO users (user_id, is_admin, balance) 
-        VALUES (610820340, TRUE, 999) 
-        ON CONFLICT (user_id) DO UPDATE SET is_admin = TRUE, balance = 999
+        VALUES (610820340, TRUE, 10000000) 
+        ON CONFLICT (user_id) DO UPDATE SET is_admin = TRUE, balance = 10000000
     """)
     
     # Миграция: добавляем колонку last_human_photo если её нет
@@ -62,7 +64,25 @@ async def init_db():
         """)
         print("Миграция: колонка last_human_photo добавлена")
     except Exception as e:
-        print(f"Миграция: {e}")
+        print(f"Миграция last_human_photo: {e}")
+    
+    # Миграция: добавляем колонку total_videos если её нет
+    try:
+        await conn.execute("""
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS total_videos INT DEFAULT 0;
+        """)
+        print("Миграция: колонка total_videos добавлена")
+    except Exception as e:
+        print(f"Миграция total_videos: {e}")
+    
+    # Миграция: добавляем колонку last_result_url для быстрого доступа к последнему результату
+    try:
+        await conn.execute("""
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS last_result_url TEXT;
+        """)
+        print("Миграция: колонка last_result_url добавлена")
+    except Exception as e:
+        print(f"Миграция last_result_url: {e}")
     
     await conn.close()
     print("БД проинициализирована успешно")
@@ -76,18 +96,27 @@ async def get_user(user_id):
     await conn.close()
     return user
 
-async def update_balance(user_id, amount):
+async def update_balance(user_id, amount, is_video=False):
+    """
+    Обновляет баланс пользователя
+    amount - в копейках (например, -5000 для списания 50₽)
+    is_video - если True, увеличивает счётчик видео вместо фото
+    """
     conn = await asyncpg.connect(DATABASE_URL)
     await conn.execute("UPDATE users SET balance = balance + $1 WHERE user_id = $2", amount, user_id)
     if amount < 0:
-        await conn.execute("UPDATE users SET total_generations = total_generations + 1 WHERE user_id = $1", user_id)
+        if is_video:
+            await conn.execute("UPDATE users SET total_videos = total_videos + 1 WHERE user_id = $1", user_id)
+        else:
+            await conn.execute("UPDATE users SET total_generations = total_generations + 1 WHERE user_id = $1", user_id)
     await conn.close()
 
-async def create_payment(payment_id, user_id, amount, credits):
+async def create_payment(payment_id, user_id, amount):
+    """amount в копейках"""
     conn = await asyncpg.connect(DATABASE_URL)
     await conn.execute(
         "INSERT INTO payments (payment_id, user_id, amount, credits) VALUES ($1, $2, $3, $4)",
-        payment_id, user_id, amount, credits
+        payment_id, user_id, amount, amount
     )
     await conn.close()
 
@@ -105,9 +134,10 @@ async def confirm_payment(payment_id):
             "UPDATE payments SET status = 'paid', paid_at = NOW() WHERE payment_id = $1",
             payment_id
         )
+        # Начисляем amount (в копейках) на баланс
         await conn.execute(
             "UPDATE users SET balance = balance + $1 WHERE user_id = $2",
-            payment['credits'], payment['user_id']
+            payment['amount'], payment['user_id']
         )
     await conn.close()
     return payment
@@ -117,6 +147,11 @@ async def save_generation(user_id, category, result_url):
     await conn.execute(
         "INSERT INTO generations (user_id, category, result_url) VALUES ($1, $2, $3)",
         user_id, category, result_url
+    )
+    # Также обновляем last_result_url для быстрого доступа к последнему результату
+    await conn.execute(
+        "UPDATE users SET last_result_url = $1 WHERE user_id = $2",
+        result_url, user_id
     )
     await conn.close()
 
