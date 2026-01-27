@@ -7,11 +7,11 @@ from typing import Optional
 YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
 
-# Пакеты примерок
+# Пакеты пополнения баланса (в копейках)
 PACKAGES = {
-    "5_pack": {"credits": 5, "price": 25000, "title": "5 примерок", "desc": "Базовый пакет"},
-    "15_pack": {"credits": 15, "price": 60000, "title": "15 примерок", "desc": "⭐ Популярный выбор"},
-    "50_pack": {"credits": 50, "price": 150000, "title": "50 примерок", "desc": "💎 Максимальная выгода"}
+    "250_pack": {"amount": 25000, "title": "250₽", "desc": "→ 5 фото примерок"},
+    "500_pack": {"amount": 50000, "title": "500₽", "desc": "→ 12 фото или 5 видео"},
+    "1000_pack": {"amount": 100000, "title": "1000₽", "desc": "→ 25 фото или 10 видео"}
 }
 
 def get_auth_header():
@@ -25,7 +25,7 @@ async def create_payment(package_id: str, user_id: int, return_url: str) -> Opti
     Создает платеж в Юкассе
     
     Args:
-        package_id: ID пакета (например, "5_pack")
+        package_id: ID пакета (например, "250_pack")
         user_id: Telegram ID пользователя
         return_url: URL для возврата после оплаты
     
@@ -40,7 +40,7 @@ async def create_payment(package_id: str, user_id: int, return_url: str) -> Opti
     
     payload = {
         "amount": {
-            "value": f"{package['price'] / 100:.2f}",
+            "value": f"{package['amount'] / 100:.2f}",
             "currency": "RUB"
         },
         "confirmation": {
@@ -48,11 +48,11 @@ async def create_payment(package_id: str, user_id: int, return_url: str) -> Opti
             "return_url": return_url
         },
         "capture": True,
-        "description": f"{package['title']} для Virtual Stylist AI",
+        "description": f"{package['title']} на баланс Virtual Stylist AI",
         "metadata": {
             "user_id": str(user_id),
             "package_id": package_id,
-            "credits": package['credits']
+            "amount": package['amount']
         }
     }
     
@@ -74,8 +74,7 @@ async def create_payment(package_id: str, user_id: int, return_url: str) -> Opti
                     return {
                         "payment_id": data['id'],
                         "confirmation_url": data['confirmation']['confirmation_url'],
-                        "amount": package['price'],
-                        "credits": package['credits']
+                        "amount": package['amount']
                     }
                 else:
                     error_text = await response.text()
