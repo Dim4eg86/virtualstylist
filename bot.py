@@ -376,26 +376,33 @@ async def perform_broadcast(message: types.Message, state: FSMContext):
 async def start_vton(message: types.Message, state: FSMContext):
     user = await db.get_user(message.from_user.id)
     
-    # Проверяем баланс: нужно минимум 50₽ (5000 копеек)
-    if user['balance'] < 5000 and not user['is_admin']:
+    # Проверяем баланс: обычным нужно 50₽, админу 1₽
+    min_balance = 100 if user['is_admin'] else 5000
+    
+    if user['balance'] < min_balance:
         builder = InlineKeyboardBuilder()
         builder.button(text="💎 Пополнить баланс", callback_data="buy_250_pack")
+        
+        price_text = "1₽" if user['is_admin'] else "50₽"
         
         await message.answer(
             "😔 <b>Недостаточно средств!</b>\n\n"
             f"💰 Твой баланс: <b>{user['balance'] / 100:.0f}₽</b>\n"
-            f"💡 Нужно минимум: <b>50₽</b>\n\n"
+            f"💡 Нужно минимум: <b>{price_text}</b>\n\n"
             "Пополни баланс, чтобы создавать крутые образы:",
             reply_markup=builder.as_markup()
         )
         return
     
     await state.clear()
+    
+    price_text = "1₽ (админ-режим)" if user['is_admin'] else "50₽"
+    
     await message.answer(
         "📸 <b>Шаг 1 из 3: Твоё фото</b>\n\n"
         "Отправь фото человека (в полный рост или по пояс).\n\n"
         "💡 <i>Совет: Лучше работает на фото с однотонным фоном</i>\n"
-        "💰 <i>Стоимость: 50₽</i>"
+        f"💰 <i>Стоимость: {price_text}</i>"
     )
     await state.set_state(VTONState.wait_human)
 
@@ -463,10 +470,15 @@ async def garment_step(message: types.Message, state: FSMContext):
                 f"Нажми 🎬 Создать видео (+100₽)"
             )
         else:
+            # Админ платит 1₽ для тестирования
+            await db.update_balance(message.from_user.id, -100, is_video=False)
+            new_balance = (user['balance'] - 100) / 100
             caption = (
-                "✨ <b>Твой образ готов!</b>\n\n"
-                "👑 У тебя безлимитный доступ (админ)\n"
-                "Попробуй другую одежду!"
+                f"✨ <b>Твой образ готов!</b>\n\n"
+                f"👑 Админ-режим: 1₽ за фото\n"
+                f"💰 Баланс: <b>{new_balance:.0f}₽</b>\n\n"
+                f"💡 Хочешь оживить фото?\n"
+                f"Нажми 🎬 Создать видео (+1₽)"
             )
         
         await message.answer_photo(
@@ -524,15 +536,19 @@ async def start_video_creation(callback: types.CallbackQuery, state: FSMContext)
     """Пользователь хочет создать видео"""
     user = await db.get_user(callback.from_user.id)
     
-    # Проверяем баланс: нужно 100₽ (10000 копеек)
-    if user['balance'] < 10000 and not user['is_admin']:
+    # Проверяем баланс: обычным нужно 100₽, админу 1₽
+    min_balance = 100 if user['is_admin'] else 10000
+    
+    if user['balance'] < min_balance:
         builder = InlineKeyboardBuilder()
         builder.button(text="💎 Пополнить баланс", callback_data="buy_250_pack")
+        
+        price_text = "1₽" if user['is_admin'] else "100₽"
         
         await callback.message.answer(
             "😔 <b>Недостаточно средств!</b>\n\n"
             f"💰 Твой баланс: <b>{user['balance'] / 100:.0f}₽</b>\n"
-            f"💡 Нужно минимум: <b>100₽</b>\n\n"
+            f"💡 Нужно минимум: <b>{price_text}</b>\n\n"
             "Пополни баланс для создания видео:",
             reply_markup=builder.as_markup()
         )
@@ -544,6 +560,8 @@ async def start_video_creation(callback: types.CallbackQuery, state: FSMContext)
         await callback.answer("❌ Нет сохраненного результата примерки", show_alert=True)
         return
     
+    price_text = "1₽ (админ-режим)" if user['is_admin'] else "100₽"
+    
     # Показываем выбор типа анимации
     await callback.message.answer(
         "🎬 <b>Создание видео-анимации</b>\n\n"
@@ -552,7 +570,7 @@ async def start_video_creation(callback: types.CallbackQuery, state: FSMContext)
         "🚶 <b>Шаг вперёд</b> — уверенный шаг к камере\n"
         "💃 <b>Модельная походка</b> — движение как на подиуме\n\n"
         "⏱ Создание займёт ~30-60 секунд\n"
-        "💰 Стоимость: <b>100₽</b>",
+        f"💰 Стоимость: <b>{price_text}</b>",
         reply_markup=get_animation_type_kb()
     )
     await callback.answer()
@@ -568,8 +586,10 @@ async def process_animation(callback: types.CallbackQuery, state: FSMContext):
     
     user = await db.get_user(callback.from_user.id)
     
-    # Проверяем баланс ещё раз
-    if user['balance'] < 10000 and not user['is_admin']:
+    # Проверяем баланс: обычным нужно 100₽, админу 1₽
+    min_balance = 100 if user['is_admin'] else 10000
+    
+    if user['balance'] < min_balance:
         await callback.answer("❌ Недостаточно средств!", show_alert=True)
         return
     
@@ -612,10 +632,14 @@ async def process_animation(callback: types.CallbackQuery, state: FSMContext):
                 f"💰 Баланс: <b>{new_balance:.0f}₽</b>"
             )
         else:
+            # Админ платит 1₽ для тестирования
+            await db.update_balance(callback.from_user.id, -100, is_video=True)
+            new_balance = (user['balance'] - 100) / 100
             caption = (
                 f"✨ <b>Твоё видео готово!</b>\n\n"
                 f"Тип: {animation_names[animation_type]}\n"
-                f"👑 Безлимитный доступ (админ)"
+                f"👑 Админ-режим: 1₽ за видео\n"
+                f"💰 Баланс: <b>{new_balance:.0f}₽</b>"
             )
         
         # Отправляем видео
