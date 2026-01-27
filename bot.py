@@ -361,13 +361,21 @@ async def check_admin(message: types.Message):
     """Проверка статуса администратора"""
     user = await db.get_user(message.from_user.id)
     
+    is_admin_value = user.get('is_admin', False)
+    is_admin_type = str(type(is_admin_value).__name__)
+    
     await message.answer(
         f"<b>🔍 Проверка статуса:</b>\n\n"
         f"🆔 User ID: <code>{message.from_user.id}</code>\n"
-        f"👑 is_admin: <code>{user.get('is_admin', False)}</code>\n"
+        f"👑 is_admin: <code>{is_admin_value}</code>\n"
         f"💰 Баланс: <code>{user['balance']} копеек = {user['balance']/100:.0f}₽</code>\n"
-        f"📊 Тип данных is_admin: <code>{type(user.get('is_admin'))}</code>\n\n"
-        f"<b>Полные данные:</b>\n<code>{dict(user)}</code>"
+        f"📊 Тип: {is_admin_type}\n\n"
+        f"<b>Все поля пользователя:</b>\n"
+        f"• user_id: {user.get('user_id')}\n"
+        f"• balance: {user.get('balance')}\n"
+        f"• is_admin: {user.get('is_admin')}\n"
+        f"• total_generations: {user.get('total_generations')}\n"
+        f"• total_videos: {user.get('total_videos')}"
     )
 
 @dp.callback_query(F.data == "admin_stats")
