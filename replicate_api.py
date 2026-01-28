@@ -43,11 +43,10 @@ async def generate_vton_image(human_url, garment_url, category):
                 "category": model_category,
                 "n_samples": 1,
                 "n_steps": 20,              # 20 = быстро (~20 сек), 30 = лучше качество
-                "image_scale": 2,
                 "seed": -1,
-                # Параметры для правильных пропорций:
-                "is_checked": True,         # Включить проверку
-                "is_checked_crop": False,   # Отключить обрезку
+                # КРИТИЧЕСКИ ВАЖНО: crop=True для правильных пропорций 3:4
+                "crop": True,               # Автокроп под формат 768x1024 (3:4)
+                # Дополнительные параметры
                 "denoise_steps": 20,
                 "guidance_scale": 2.0
             }
