@@ -84,6 +84,15 @@ async def init_db():
     except Exception as e:
         print(f"Миграция last_result_url: {e}")
     
+    # Миграция: добавляем колонку total_generations если её нет
+    try:
+        await conn.execute("""
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS total_generations INT DEFAULT 0;
+        """)
+        print("Миграция: колонка total_generations добавлена")
+    except Exception as e:
+        print(f"Миграция total_generations: {e}")
+    
     await conn.close()
     print("БД проинициализирована успешно")
 
