@@ -8,7 +8,10 @@ YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
 
 # Пакеты пополнения баланса (в копейках)
+# amount - сколько платит пользователь
+# credit_amount - сколько зачисляется (если не указано, то = amount)
 PACKAGES = {
+    "test_pack": {"amount": 500, "credit_amount": 15000, "title": "5₽ ТЕСТ", "desc": "→ бонус 150₽ (админ)"},
     "250_pack": {"amount": 25000, "title": "250₽", "desc": "→ 5 фото примерок"},
     "500_pack": {"amount": 50000, "title": "500₽", "desc": "→ 12 фото или 5 видео"},
     "1000_pack": {"amount": 100000, "title": "1000₽", "desc": "→ 25 фото или 10 видео"}
@@ -38,6 +41,9 @@ async def create_payment(package_id: str, user_id: int, return_url: str) -> Opti
     package = PACKAGES[package_id]
     payment_id = str(uuid.uuid4())
     
+    # Для зачисления используем credit_amount если есть, иначе amount
+    credit_amount = package.get('credit_amount', package['amount'])
+    
     payload = {
         "amount": {
             "value": f"{package['amount'] / 100:.2f}",
@@ -52,7 +58,7 @@ async def create_payment(package_id: str, user_id: int, return_url: str) -> Opti
         "metadata": {
             "user_id": str(user_id),
             "package_id": package_id,
-            "amount": package['amount']
+            "amount": credit_amount  # Зачисляем credit_amount, а не amount!
         }
     }
     
