@@ -19,14 +19,15 @@ async def generate_vton_image(human_url, garment_url, category):
     print(f"DEBUG replicate_api.py: Получена категория='{category}'")
     
     # Маппинг русских категорий на категории IDM-VTON
+    # ВАЖНО: Для платьев используем upper_body, т.к. dresses часто разделяет на части
     category_mapping = {
         "верх": "upper_body",
         "низ": "lower_body",
-        "платье": "dresses",
+        "платье": "upper_body",  # Используем upper_body для платьев!
         # На всякий случай английские варианты
         "upper_body": "upper_body",
         "lower_body": "lower_body",
-        "dresses": "dresses"
+        "dresses": "upper_body"  # И здесь тоже
     }
     
     model_category = category_mapping.get(category.lower(), "upper_body")
@@ -34,11 +35,14 @@ async def generate_vton_image(human_url, garment_url, category):
     print(f"DEBUG replicate_api.py: Маппинг '{category}' -> '{model_category}'")
     
     try:
-        # Специальный промпт для платьев чтобы модель не разделяла на части
-        if model_category == "dresses":
-            garment_description = "A complete one-piece dress garment, full-length clothing item"
+        # Специальный промпт для платьев
+        # Используем upper_body категорию, но в промпте указываем что это платье
+        if category.lower() == "платье" or category.lower() == "dress":
+            garment_description = "A complete full-length dress, one-piece elegant dress garment"
         else:
             garment_description = "High quality clothing item"
+        
+        print(f"DEBUG replicate_api.py: Промпт для одежды: '{garment_description}'")
         
         output = await replicate.async_run(
             model_version,
