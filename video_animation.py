@@ -4,7 +4,7 @@ import asyncio
 
 async def animate_image(image_url: str, animation_type: str = "turn"):
     """
-    Анимирует фото с помощью Kling AI
+    Анимирует фото с помощью Stable Video Diffusion
     
     Args:
         image_url: URL изображения для анимации
@@ -16,9 +16,9 @@ async def animate_image(image_url: str, animation_type: str = "turn"):
     
     # Промпты для разных типов анимации
     prompts = {
-        "turn": "Woman elegantly turning around 180 degrees, smooth rotation, fashion model style, studio lighting",
-        "step": "Woman confidently taking a step forward towards camera, slight smile, professional demeanor",
-        "walk": "Woman walking forward with model runway walk, graceful movement, confident posture, fashion show style"
+        "turn": "Woman elegantly turning around, smooth rotation, fashion model style",
+        "step": "Woman taking a step forward towards camera, confident movement",
+        "walk": "Woman walking forward with runway walk, graceful movement"
     }
     
     prompt = prompts.get(animation_type, prompts["turn"])
@@ -27,17 +27,19 @@ async def animate_image(image_url: str, animation_type: str = "turn"):
     print(f"DEBUG: Image URL: {image_url}")
     
     try:
-        # Используем Kling AI для генерации видео из изображения
+        # Используем Stable Video Diffusion - это бесплатная модель!
         output = await replicate.async_run(
-            "fofr/kling-video:5a0cb2d333033e0830c137f137bc8e5f5c0df3f0903c13f61c167c1bcd48f656",
+            "stability-ai/stable-video-diffusion:3f0457e4619daac51203dedb472816fd4af51f3149fa7a9e0b5ffcf1b8172438",
             input={
-                "prompt": prompt,
-                "image": image_url,
-                "duration": "5",  # 5 секунд
-                "aspect_ratio": "9:16"  # Вертикальное видео
+                "input_image": image_url,
+                "sizing_strategy": "maintain_aspect_ratio",
+                "frames_per_second": 6,
+                "motion_bucket_id": 127,  # Больше движения
+                "cond_aug": 0.02
             }
         )
         
+        # Output может быть строкой или списком
         if isinstance(output, list) and len(output) > 0:
             video_url = str(output[0])
         elif isinstance(output, str):
@@ -49,5 +51,5 @@ async def animate_image(image_url: str, animation_type: str = "turn"):
         return video_url
         
     except Exception as e:
-        print(f"DEBUG: Ошибка в Kling AI: {e}")
+        print(f"DEBUG: Ошибка в Stable Video Diffusion: {e}")
         raise e
