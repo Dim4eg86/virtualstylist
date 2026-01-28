@@ -484,7 +484,8 @@ async def human_step(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("set_"))
 async def set_cat(callback: types.CallbackQuery, state: FSMContext):
-    cat_map = {"upper": "upper_body", "lower": "lower_body", "dresses": "dresses"}
+    # ВАЖНО: для платьев используем upper_body, т.к. dresses работает некорректно в Flux VTON
+    cat_map = {"upper": "upper_body", "lower": "lower_body", "dresses": "upper_body"}
     key = callback.data.split("_")[1]
     await state.update_data(category=cat_map[key])
     
