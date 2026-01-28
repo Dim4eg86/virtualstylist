@@ -55,10 +55,13 @@ def get_category_kb():
     builder.adjust(3)
     return builder.as_markup()
 
-def get_packages_kb():
+def get_packages_kb(is_admin=False):
     """Клавиатура с пакетами пополнения"""
     builder = InlineKeyboardBuilder()
     for package_id, info in yookassa.PACKAGES.items():
+        # Тестовый пакет показываем только админу
+        if package_id == "test_pack" and not is_admin:
+            continue
         price = info['amount'] / 100
         builder.button(
             text=f"{info['title']} {info['desc']}",
@@ -136,20 +139,38 @@ async def profile(message: types.Message):
 
 @dp.message(F.text == "💎 Купить примерки")
 async def show_packages(message: types.Message):
-    packages_text = (
-        "💎 <b>Пополни баланс:</b>\n\n"
-        "🔹 <b>250₽</b>\n"
-        "   → 5 фото примерок (50₽/шт)\n\n"
-        "⭐ <b>500₽</b> - Выгодно!\n"
-        "   → 12 фото или 5 видео (40₽/шт)\n\n"
-        "💎 <b>1000₽</b> - Максимум!\n"
-        "   → 25 фото или 10 видео (40₽/шт)\n\n"
-        "💡 <i>Фото примерка: 50₽</i>\n"
-        "💡 <i>Видео анимация: 100₽</i>\n\n"
-        "Оплата через ЮKassa - быстро и безопасно 🔒"
-    )
+    user = await db.get_user(message.from_user.id)
     
-    await message.answer(packages_text, reply_markup=get_packages_kb())
+    if user.get('is_admin'):
+        packages_text = (
+            "💎 <b>Пополни баланс:</b>\n\n"
+            "🧪 <b>5₽ ТЕСТ</b> - для админа\n"
+            "   → Тестовый пакет (1 фото + 1 видео)\n\n"
+            "🔹 <b>250₽</b>\n"
+            "   → 5 фото примерок (50₽/шт)\n\n"
+            "⭐ <b>500₽</b> - Выгодно!\n"
+            "   → 12 фото или 5 видео (40₽/шт)\n\n"
+            "💎 <b>1000₽</b> - Максимум!\n"
+            "   → 25 фото или 10 видео (40₽/шт)\n\n"
+            "💡 <i>Фото примерка: 50₽</i>\n"
+            "💡 <i>Видео анимация: 100₽</i>\n\n"
+            "Оплата через ЮKassa - быстро и безопасно 🔒"
+        )
+    else:
+        packages_text = (
+            "💎 <b>Пополни баланс:</b>\n\n"
+            "🔹 <b>250₽</b>\n"
+            "   → 5 фото примерок (50₽/шт)\n\n"
+            "⭐ <b>500₽</b> - Выгодно!\n"
+            "   → 12 фото или 5 видео (40₽/шт)\n\n"
+            "💎 <b>1000₽</b> - Максимум!\n"
+            "   → 25 фото или 10 видео (40₽/шт)\n\n"
+            "💡 <i>Фото примерка: 50₽</i>\n"
+            "💡 <i>Видео анимация: 100₽</i>\n\n"
+            "Оплата через ЮKassa - быстро и безопасно 🔒"
+        )
+    
+    await message.answer(packages_text, reply_markup=get_packages_kb(user.get('is_admin', False)))
 
 @dp.callback_query(F.data.startswith("buy_"))
 async def process_buy(callback: types.CallbackQuery):
@@ -421,19 +442,15 @@ async def perform_broadcast(message: types.Message, state: FSMContext):
 async def start_vton(message: types.Message, state: FSMContext):
     user = await db.get_user(message.from_user.id)
     
-    # Проверяем баланс: обычным нужно 50₽, админу 1₽
-    min_balance = 100 if user['is_admin'] else 5000
-    
-    if user['balance'] < min_balance:
+    # Проверяем баланс: всем нужно минимум 50₽ (5000 копеек)
+    if user['balance'] < 5000:
         builder = InlineKeyboardBuilder()
-        builder.button(text="💎 Пополнить баланс", callback_data="buy_250_pack")
-        
-        price_text = "1₽" if user['is_admin'] else "50₽"
+        builder.button(text="💎 Пополнить баланс", callback_data="buy_test_pack" if user.get('is_admin') else "buy_250_pack")
         
         await message.answer(
             "😔 <b>Недостаточно средств!</b>\n\n"
             f"💰 Твой баланс: <b>{user['balance'] / 100:.0f}₽</b>\n"
-            f"💡 Нужно минимум: <b>{price_text}</b>\n\n"
+            f"💡 Нужно минимум: <b>50₽</b>\n\n"
             "Пополни баланс, чтобы создавать крутые образы:",
             reply_markup=builder.as_markup()
         )
@@ -441,13 +458,11 @@ async def start_vton(message: types.Message, state: FSMContext):
     
     await state.clear()
     
-    price_text = "1₽ (админ-режим)" if user['is_admin'] else "50₽"
-    
     await message.answer(
         "📸 <b>Шаг 1 из 3: Твоё фото</b>\n\n"
         "Отправь фото человека (в полный рост или по пояс).\n\n"
         "💡 <i>Совет: Лучше работает на фото с однотонным фоном</i>\n"
-        f"💰 <i>Стоимость: {price_text}</i>"
+        f"💰 <i>Стоимость: 50₽</i>"
     )
     await state.set_state(VTONState.wait_human)
 
@@ -492,13 +507,11 @@ async def garment_step(message: types.Message, state: FSMContext):
     file = await bot.get_file(file_id)
     garment_url = f"https://api.telegram.org/file/bot{os.getenv('BOT_TOKEN')}/{file.file_path}"
     
-    price_text = "1₽ (админ-режим)" if user.get('is_admin') else "50₽"
-    
     status_msg = await message.answer(
         "✨ <b>Создаю твой образ...</b>\n\n"
         "⏳ Обычно это занимает 40-60 секунд\n"
         "🎨 AI рисует реалистичную картинку\n"
-        f"💰 Стоимость: {price_text}"
+        f"💰 Стоимость: 50₽"
     )
     
     try:
@@ -509,29 +522,19 @@ async def garment_step(message: types.Message, state: FSMContext):
         
         photo_res = requests.get(result_url).content
         
-        # Списываем 50₽ (5000 копеек) только у обычных пользователей
-        if not user.get('is_admin', False):
-            await db.update_balance(message.from_user.id, -5000, is_video=False)
-            new_balance = (user['balance'] - 5000) / 100
-            caption = (
-                f"✨ <b>Твой образ готов!</b>\n\n"
-                f"💰 Баланс: <b>{new_balance:.0f}₽</b>\n\n"
-                f"💡 Хочешь оживить фото?\n"
-                f"Нажми 🎬 Создать видео (+100₽)"
-            )
-            print(f"DEBUG: Обычный пользователь, списано 50₽")
-        else:
-            # Админ платит 1₽ для тестирования
-            await db.update_balance(message.from_user.id, -100, is_video=False)
-            new_balance = (user['balance'] - 100) / 100
-            caption = (
-                f"✨ <b>Твой образ готов!</b>\n\n"
-                f"👑 Админ-режим: 1₽ за фото\n"
-                f"💰 Баланс: <b>{new_balance:.0f}₽</b>\n\n"
-                f"💡 Хочешь оживить фото?\n"
-                f"Нажми 🎬 Создать видео (+1₽)"
-            )
-            print(f"DEBUG: Админ, списан 1₽")
+        # Списываем 50₽ (5000 копеек) у всех пользователей
+        await db.update_balance(message.from_user.id, -5000, is_video=False)
+        new_balance = (user['balance'] - 5000) / 100
+        
+        admin_badge = "👑 " if user.get('is_admin') else ""
+        
+        caption = (
+            f"✨ <b>Твой образ готов!</b>\n\n"
+            f"{admin_badge}💰 Баланс: <b>{new_balance:.0f}₽</b>\n\n"
+            f"💡 Хочешь оживить фото?\n"
+            f"Нажми 🎬 Создать видео (+100₽)"
+        )
+        print(f"DEBUG: Списано 50₽, новый баланс: {new_balance}₽")
         
         await message.answer_photo(
             types.BufferedInputFile(photo_res, filename="result.jpg"),
@@ -588,19 +591,15 @@ async def start_video_creation(callback: types.CallbackQuery, state: FSMContext)
     """Пользователь хочет создать видео"""
     user = await db.get_user(callback.from_user.id)
     
-    # Проверяем баланс: обычным нужно 100₽, админу 1₽
-    min_balance = 100 if user['is_admin'] else 10000
-    
-    if user['balance'] < min_balance:
+    # Проверяем баланс: всем нужно минимум 100₽ (10000 копеек)
+    if user['balance'] < 10000:
         builder = InlineKeyboardBuilder()
-        builder.button(text="💎 Пополнить баланс", callback_data="buy_250_pack")
-        
-        price_text = "1₽" if user['is_admin'] else "100₽"
+        builder.button(text="💎 Пополнить баланс", callback_data="buy_test_pack" if user.get('is_admin') else "buy_250_pack")
         
         await callback.message.answer(
             "😔 <b>Недостаточно средств!</b>\n\n"
             f"💰 Твой баланс: <b>{user['balance'] / 100:.0f}₽</b>\n"
-            f"💡 Нужно минимум: <b>{price_text}</b>\n\n"
+            f"💡 Нужно минимум: <b>100₽</b>\n\n"
             "Пополни баланс для создания видео:",
             reply_markup=builder.as_markup()
         )
@@ -612,8 +611,6 @@ async def start_video_creation(callback: types.CallbackQuery, state: FSMContext)
         await callback.answer("❌ Нет сохраненного результата примерки", show_alert=True)
         return
     
-    price_text = "1₽ (админ-режим)" if user['is_admin'] else "100₽"
-    
     # Показываем выбор типа анимации
     await callback.message.answer(
         "🎬 <b>Создание видео-анимации</b>\n\n"
@@ -622,7 +619,7 @@ async def start_video_creation(callback: types.CallbackQuery, state: FSMContext)
         "🚶 <b>Шаг вперёд</b> — уверенный шаг к камере\n"
         "💃 <b>Модельная походка</b> — движение как на подиуме\n\n"
         "⏱ Создание займёт ~30-60 секунд\n"
-        f"💰 Стоимость: <b>{price_text}</b>",
+        f"💰 Стоимость: <b>100₽</b>",
         reply_markup=get_animation_type_kb()
     )
     await callback.answer()
@@ -638,10 +635,8 @@ async def process_animation(callback: types.CallbackQuery, state: FSMContext):
     
     user = await db.get_user(callback.from_user.id)
     
-    # Проверяем баланс: обычным нужно 100₽, админу 1₽
-    min_balance = 100 if user['is_admin'] else 10000
-    
-    if user['balance'] < min_balance:
+    # Проверяем баланс: всем нужно минимум 100₽
+    if user['balance'] < 10000:
         await callback.answer("❌ Недостаточно средств!", show_alert=True)
         return
     
@@ -674,25 +669,18 @@ async def process_animation(callback: types.CallbackQuery, state: FSMContext):
         import requests
         video_data = requests.get(video_url).content
         
-        # Списываем 100₽ (10000 копеек) только у обычных пользователей
-        if not user['is_admin']:
-            await db.update_balance(callback.from_user.id, -10000, is_video=True)
-            new_balance = (user['balance'] - 10000) / 100
-            caption = (
-                f"✨ <b>Твоё видео готово!</b>\n\n"
-                f"Тип: {animation_names[animation_type]}\n"
-                f"💰 Баланс: <b>{new_balance:.0f}₽</b>"
-            )
-        else:
-            # Админ платит 1₽ для тестирования
-            await db.update_balance(callback.from_user.id, -100, is_video=True)
-            new_balance = (user['balance'] - 100) / 100
-            caption = (
-                f"✨ <b>Твоё видео готово!</b>\n\n"
-                f"Тип: {animation_names[animation_type]}\n"
-                f"👑 Админ-режим: 1₽ за видео\n"
-                f"💰 Баланс: <b>{new_balance:.0f}₽</b>"
-            )
+        # Списываем 100₽ (10000 копеек) у всех пользователей
+        await db.update_balance(callback.from_user.id, -10000, is_video=True)
+        new_balance = (user['balance'] - 10000) / 100
+        
+        admin_badge = "👑 " if user.get('is_admin') else ""
+        
+        caption = (
+            f"✨ <b>Твоё видео готово!</b>\n\n"
+            f"Тип: {animation_names[animation_type]}\n"
+            f"{admin_badge}💰 Баланс: <b>{new_balance:.0f}₽</b>"
+        )
+        print(f"DEBUG: Списано 100₽ за видео, новый баланс: {new_balance}₽")
         
         # Отправляем видео
         await callback.message.answer_video(
