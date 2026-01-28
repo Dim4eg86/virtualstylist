@@ -34,12 +34,18 @@ async def generate_vton_image(human_url, garment_url, category):
     print(f"DEBUG replicate_api.py: Маппинг '{category}' -> '{model_category}'")
     
     try:
+        # Специальный промпт для платьев чтобы модель не разделяла на части
+        if model_category == "dresses":
+            garment_description = "A complete one-piece dress garment, full-length clothing item"
+        else:
+            garment_description = "High quality clothing item"
+        
         output = await replicate.async_run(
             model_version,
             input={
                 "human_img": human_url,
                 "garm_img": garment_url,
-                "garment_des": "High quality clothing item",
+                "garment_des": garment_description,
                 "category": model_category,
                 "n_samples": 1,
                 "n_steps": 20,              # 20 = быстро (~20 сек), 30 = лучше качество
