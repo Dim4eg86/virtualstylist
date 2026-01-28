@@ -32,6 +32,11 @@ class VTONState(StatesGroup):
     wait_support_message = State()
     wait_admin_reply = State()
     wait_animation_choice = State()  # Новое состояние для выбора анимации
+    # Новые состояния для прямой видео-примерки
+    wait_video_human = State()
+    wait_video_category = State()
+    wait_video_garment = State()
+    wait_video_animation_type = State()
 
 # --- КЛАВИАТУРЫ ---
 
@@ -39,11 +44,12 @@ def get_main_menu():
     """Главное меню с эмодзи"""
     builder = ReplyKeyboardBuilder()
     builder.button(text="👗 Примерить одежду")
+    builder.button(text="🎬 Видео примерка")
     builder.button(text="📊 Мои примерки")
     builder.button(text="💎 Купить примерки")
     builder.button(text="👤 Профиль")
     builder.button(text="💬 Поддержка")
-    builder.adjust(2, 2, 1)
+    builder.adjust(2, 2, 2)
     return builder.as_markup(resize_keyboard=True)
 
 def get_category_kb():
@@ -116,7 +122,8 @@ async def profile(message: types.Message):
     
     # Рассчитываем доступное количество
     photos_available = int(balance_rub / 50)
-    videos_available = int(balance_rub / 100)
+    videos_from_photo = int(balance_rub / 100)
+    video_tryons = int(balance_rub / 150)
     
     profile_text = (
         f"<b>📱 Твой профиль</b>\n\n"
@@ -124,12 +131,13 @@ async def profile(message: types.Message):
         f"💰 Баланс: <b>{balance_rub:.0f}₽</b>\n\n"
         f"📊 <b>Доступно:</b>\n"
         f"   📸 ~{photos_available} фото примерок\n"
-        f"   🎬 ~{videos_available} видео анимаций\n\n"
+        f"   🎬 ~{videos_from_photo} видео из фото\n"
+        f"   🎥 ~{video_tryons} видео-примерок\n\n"
         f"📈 <b>Создано:</b>\n"
         f"   📸 Фото: <b>{user['total_generations']}</b>\n"
         f"   🎬 Видео: <b>{user.get('total_videos', 0)}</b>\n\n"
         f"⭐ Статус: {status}\n\n"
-        f"💡 <i>Фото = 50₽ | Видео = 100₽</i>"
+        f"💡 <i>Фото = 50₽ | Видео из фото = 100₽ | Видео-примерка = 150₽</i>"
     )
     
     if user['balance'] < 5000:
@@ -145,28 +153,32 @@ async def show_packages(message: types.Message):
         packages_text = (
             "💎 <b>Пополни баланс:</b>\n\n"
             "🧪 <b>5₽ ТЕСТ</b> - для админа\n"
-            "   → Тестовый пакет (1 фото + 1 видео)\n\n"
+            "   → Тестовый пакет\n\n"
             "🔹 <b>250₽</b>\n"
-            "   → 5 фото примерок (50₽/шт)\n\n"
+            "   → 5 фото или 1-2 видео-примерки\n\n"
             "⭐ <b>500₽</b> - Выгодно!\n"
-            "   → 12 фото или 5 видео (40₽/шт)\n\n"
+            "   → 10 фото или 3 видео-примерки\n\n"
             "💎 <b>1000₽</b> - Максимум!\n"
-            "   → 25 фото или 10 видео (40₽/шт)\n\n"
-            "💡 <i>Фото примерка: 50₽</i>\n"
-            "💡 <i>Видео анимация: 100₽</i>\n\n"
+            "   → 20 фото или 6 видео-примерок\n\n"
+            "💡 <b>Цены:</b>\n"
+            "   📸 Фото: 50₽\n"
+            "   🎬 Видео из фото: 100₽\n"
+            "   🎥 Видео-примерка: 150₽ (всё сразу!)\n\n"
             "Оплата через ЮKassa - быстро и безопасно 🔒"
         )
     else:
         packages_text = (
             "💎 <b>Пополни баланс:</b>\n\n"
             "🔹 <b>250₽</b>\n"
-            "   → 5 фото примерок (50₽/шт)\n\n"
+            "   → 5 фото или 1-2 видео-примерки\n\n"
             "⭐ <b>500₽</b> - Выгодно!\n"
-            "   → 12 фото или 5 видео (40₽/шт)\n\n"
+            "   → 10 фото или 3 видео-примерки\n\n"
             "💎 <b>1000₽</b> - Максимум!\n"
-            "   → 25 фото или 10 видео (40₽/шт)\n\n"
-            "💡 <i>Фото примерка: 50₽</i>\n"
-            "💡 <i>Видео анимация: 100₽</i>\n\n"
+            "   → 20 фото или 6 видео-примерок\n\n"
+            "💡 <b>Цены:</b>\n"
+            "   📸 Фото: 50₽\n"
+            "   🎬 Видео из фото: 100₽\n"
+            "   🎥 Видео-примерка: 150₽ (всё сразу!)\n\n"
             "Оплата через ЮKassa - быстро и безопасно 🔒"
         )
     
@@ -593,6 +605,188 @@ async def new_photo_tryagain(callback: types.CallbackQuery, state: FSMContext):
     )
     await state.set_state(VTONState.wait_human)
     await callback.answer()
+
+# --- ПРЯМАЯ ВИДЕО-ПРИМЕРКА (150₽) ---
+
+@dp.message(F.text == "🎬 Видео примерка")
+async def start_video_vton(message: types.Message, state: FSMContext):
+    """Начало прямой видео-примерки за 150₽"""
+    user = await db.get_user(message.from_user.id)
+    
+    # Проверяем баланс: нужно минимум 150₽ (15000 копеек)
+    if user['balance'] < 15000:
+        builder = InlineKeyboardBuilder()
+        builder.button(text="💎 Пополнить баланс", callback_data="buy_test_pack" if user.get('is_admin') else "buy_250_pack")
+        
+        await message.answer(
+            "😔 <b>Недостаточно средств для видео-примерки!</b>\n\n"
+            f"💰 Твой баланс: <b>{user['balance'] / 100:.0f}₽</b>\n"
+            f"💡 Нужно минимум: <b>150₽</b>\n\n"
+            "🎬 <b>Видео-примерка включает:</b>\n"
+            "   • Фото примерка\n"
+            "   • Анимация видео 6 сек\n"
+            "   • Всё за один раз!\n\n"
+            "Пополни баланс:",
+            reply_markup=builder.as_markup()
+        )
+        return
+    
+    await state.clear()
+    
+    await message.answer(
+        "🎬 <b>Видео-примерка за 150₽</b>\n\n"
+        "📸 <b>Шаг 1 из 4: Твоё фото</b>\n\n"
+        "Отправь фото человека (в полный рост или по пояс).\n\n"
+        "💡 <i>Совет: Лучше работает на фото с однотонным фоном</i>\n"
+        "🎬 <i>Получишь: Фото + Видео анимацию!</i>"
+    )
+    await state.set_state(VTONState.wait_video_human)
+
+@dp.message(VTONState.wait_video_human, F.photo)
+async def video_human_step(message: types.Message, state: FSMContext):
+    """Получили фото человека для видео-примерки"""
+    file_id = message.photo[-1].file_id
+    file = await bot.get_file(file_id)
+    url = f"https://api.telegram.org/file/bot{os.getenv('BOT_TOKEN')}/{file.file_path}"
+    
+    await state.update_data(human=url)
+    await db.save_last_human_photo(message.from_user.id, url)
+    
+    await message.answer(
+        "👗 <b>Шаг 2 из 4: Категория</b>\n\n"
+        "Выбери, что хочешь примерить:",
+        reply_markup=get_category_kb()
+    )
+
+@dp.callback_query(F.data.startswith("set_"), VTONState.wait_video_human)
+async def video_set_cat(callback: types.CallbackQuery, state: FSMContext):
+    """Выбор категории для видео-примерки"""
+    cat_map = {
+        "upper": "верх",
+        "lower": "низ",
+        "dresses": "платье"
+    }
+    key = callback.data.split("_")[1]
+    category = cat_map[key]
+    
+    await state.update_data(category=category)
+    
+    print(f"DEBUG bot.py (VIDEO): Выбрана категория - кнопка='{key}', передаём='{category}'")
+    
+    await callback.message.edit_text(
+        "📷 <b>Шаг 3 из 4: Фото одежды</b>\n\n"
+        "Отправь фото одежды (на белом фоне или манекене).\n\n"
+        "💡 <i>Совет: Чёткое фото с хорошим освещением</i>"
+    )
+    await state.set_state(VTONState.wait_video_garment)
+
+@dp.message(VTONState.wait_video_garment, F.photo)
+async def video_garment_step(message: types.Message, state: FSMContext):
+    """Получили фото одежды - выбор типа анимации"""
+    file_id = message.photo[-1].file_id
+    file = await bot.get_file(file_id)
+    garment_url = f"https://api.telegram.org/file/bot{os.getenv('BOT_TOKEN')}/{file.file_path}"
+    
+    await state.update_data(garment=garment_url)
+    
+    # Предлагаем выбрать тип анимации
+    await message.answer(
+        "🎬 <b>Шаг 4 из 4: Выбери анимацию</b>\n\n"
+        "Какое движение хочешь видеть в видео?",
+        reply_markup=get_animation_type_kb()
+    )
+    await state.set_state(VTONState.wait_video_animation_type)
+
+@dp.callback_query(F.data.startswith("anim_"), VTONState.wait_video_animation_type)
+async def video_create_final(callback: types.CallbackQuery, state: FSMContext):
+    """Финальная генерация видео-примерки"""
+    user = await db.get_user(callback.from_user.id)
+    data = await state.get_data()
+    
+    # Отмена
+    if callback.data == "anim_cancel":
+        await callback.message.edit_text("❌ Видео-примерка отменена")
+        await state.clear()
+        await callback.answer()
+        return
+    
+    # Проверка баланса ещё раз
+    if user['balance'] < 15000:
+        await callback.message.edit_text(
+            "😔 <b>Недостаточно средств!</b>\n\n"
+            f"💰 Твой баланс: <b>{user['balance'] / 100:.0f}₽</b>\n"
+            f"💡 Нужно: <b>150₽</b>"
+        )
+        await state.clear()
+        await callback.answer()
+        return
+    
+    # Определяем тип анимации
+    anim_type_map = {
+        "anim_turn": "turn",
+        "anim_step": "step",
+        "anim_walk": "walk"
+    }
+    animation_type = anim_type_map.get(callback.data, "walk")
+    
+    status_msg = await callback.message.edit_text(
+        "✨ <b>Создаём твою видео-примерку...</b>\n\n"
+        "⏳ Это займёт 2-3 минуты\n"
+        "🎨 Сначала создаём фото, потом анимацию\n"
+        f"💰 Стоимость: 150₽"
+    )
+    
+    try:
+        # ШАГ 1: Создаём фото примерку
+        print(f"DEBUG VIDEO: Шаг 1 - создание фото")
+        result_url = await generate_vton_image(data['human'], data['garment'], data['category'])
+        
+        # ШАГ 2: Создаём видео из фото
+        print(f"DEBUG VIDEO: Шаг 2 - создание видео из фото")
+        video_url = await animate_image(result_url, animation_type)
+        
+        # Загружаем видео
+        video_res = requests.get(video_url).content
+        
+        # Списываем 150₽ (15000 копеек)
+        await db.update_balance(message.from_user.id, -15000, is_video=True)
+        new_balance = (user['balance'] - 15000) / 100
+        
+        # Сохраняем в историю
+        await db.save_generation(message.from_user.id, data['category'], result_url)
+        
+        admin_badge = "👑 " if user.get('is_admin') else ""
+        
+        caption = (
+            f"🎬 <b>Твоя видео-примерка готова!</b>\n\n"
+            f"{admin_badge}💰 Баланс: <b>{new_balance:.0f}₽</b>\n\n"
+            f"✨ Видео включает фото + анимацию!\n"
+            f"📱 Сохрани и поделись с друзьями"
+        )
+        
+        print(f"DEBUG: Списано 150₽ за видео-примерку, новый баланс: {new_balance}₽")
+        
+        # Отправляем видео
+        await message.answer_video(
+            types.BufferedInputFile(video_res, filename="video_tryoन.mp4"),
+            caption=caption,
+            reply_markup=get_main_menu()
+        )
+        
+        # Удаляем статусное сообщение
+        await status_msg.delete()
+        await callback.answer("🎬 Видео-примерка готова!", show_alert=True)
+        
+    except Exception as e:
+        await status_msg.edit_text(
+            "❌ <b>Произошла ошибка</b>\n\n"
+            "Попробуй ещё раз или создай обычную примерку.\n"
+            "Деньги не были списаны."
+        )
+        print(f"Ошибка создания видео-примерки: {e}")
+        await callback.answer()
+    finally:
+        await state.clear()
 
 # --- СИСТЕМА СОЗДАНИЯ ВИДЕО ---
 
