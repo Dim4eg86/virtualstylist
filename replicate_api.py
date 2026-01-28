@@ -2,27 +2,36 @@ import replicate
 import os
 
 async def generate_vton_image(human_url, garment_url, category):
-    # IDM-VTON - быстрая модель (20 сек вместо 5-7 минут)
+    """
+    Генерация виртуальной примерки через IDM-VTON
+    
+    Args:
+        human_url: URL фото человека
+        garment_url: URL фото одежды
+        category: Категория одежды ("верх", "низ", "платье")
+    
+    Returns:
+        str: URL сгенерированного изображения
+    """
+    # IDM-VTON - быстрая модель (20-30 сек вместо 5-7 минут)
     model_version = "cuuupid/idm-vton:906425dbca90663ff5427624839572cc56ea7d380343d13e2a4c4b09d3f0c30f"
     
-    print(f"DEBUG: Запуск генерации IDM-VTON. Категория: {category}")
+    print(f"DEBUG replicate_api.py: Получена категория='{category}'")
     
-    # Маппинг ТВОИХ категорий на категории IDM-VTON
+    # Маппинг русских категорий на категории IDM-VTON
     category_mapping = {
         "верх": "upper_body",
         "низ": "lower_body",
         "платье": "dresses",
         # На всякий случай английские варианты
-        "upper": "upper_body",
-        "lower": "lower_body",
-        "dress": "dresses",
+        "upper_body": "upper_body",
+        "lower_body": "lower_body",
         "dresses": "dresses"
     }
     
-    # Определяем категорию для модели (по умолчанию верх)
     model_category = category_mapping.get(category.lower(), "upper_body")
     
-    print(f"DEBUG: Маппинг категории '{category}' -> '{model_category}'")
+    print(f"DEBUG replicate_api.py: Маппинг '{category}' -> '{model_category}'")
     
     try:
         output = await replicate.async_run(
@@ -33,17 +42,28 @@ async def generate_vton_image(human_url, garment_url, category):
                 "garment_des": "High quality clothing item",
                 "category": model_category,
                 "n_samples": 1,
-                "n_steps": 20,      # 20 = быстро (~20 сек), 30 = лучше качество (~30 сек)
+                "n_steps": 20,              # 20 = быстро (~20 сек), 30 = лучше качество
                 "image_scale": 2,
-                "seed": -1
+                "seed": -1,
+                # Параметры для правильных пропорций:
+                "is_checked": True,         # Включить проверку
+                "is_checked_crop": False,   # Отключить обрезку
+                "denoise_steps": 20,
+                "guidance_scale": 2.0
             }
         )
         
-        print(f"DEBUG: IDM-VTON успешно завершен. Тип output: {type(output)}")
+        print(f"DEBUG replicate_api.py: Генерация IDM-VTON завершена успешно. Тип output: {type(output)}")
         
         if isinstance(output, list):
-            return str(output[0])
-        return str(output)
+            result = str(output[0])
+            print(f"DEBUG replicate_api.py: Возвращаем URL из списка: {result[:100]}...")
+            return result
+        
+        result = str(output)
+        print(f"DEBUG replicate_api.py: Возвращаем URL: {result[:100]}...")
+        return result
+        
     except Exception as e:
-        print(f"DEBUG: Ошибка в Replicate IDM-VTON: {e}")
+        print(f"DEBUG replicate_api.py: ОШИБКА при генерации - {e}")
         raise e
