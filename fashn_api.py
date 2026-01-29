@@ -74,8 +74,8 @@ async def generate_vton_fashn(human_url, garment_url, category):
         result = fal_client.run(
             "fal-ai/fashn/tryon/v1.5",
             arguments={
-                "model_image_url": human_fal_url,
-                "garment_image_url": garment_fal_url,
+                "model_image": human_fal_url,      # ← БЕЗ _url!
+                "garment_image": garment_fal_url,  # ← БЕЗ _url!
                 "category": fashn_category
             }
         )
