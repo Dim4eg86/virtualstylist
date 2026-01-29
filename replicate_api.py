@@ -3,9 +3,9 @@ import os
 
 async def generate_vton_image(human_url, garment_url, category):
     """
-    Генерация виртуальной примерки через IDM-VTON
+    Генерация виртуальной примерки через Flux-Fill-Redux-Try-On
     
-    Оптимизировано для работы с платьями
+    Поддерживает категорию "overall" для платьев целиком!
     
     Args:
         human_url: URL фото человека
@@ -15,60 +15,50 @@ async def generate_vton_image(human_url, garment_url, category):
     Returns:
         str: URL сгенерированного изображения
     """
-    # IDM-VTON - быстрая и доступная модель
-    model_version = "cuuupid/idm-vton:906425dbca90663ff5427624839572cc56ea7d380343d13e2a4c4b09d3f0c30f"
+    # Flux-Fill-Redux - поддерживает платья через "overall"!
+    model_name = "cedoysch/flux-fill-redux-try-on"
     
-    print(f"DEBUG replicate_api.py: Получена категория='{category}'")
+    print(f"DEBUG replicate_api.py (Flux-Redux): Получена категория='{category}'")
     
-    # Для платьев используем upper_body (работает лучше чем dresses)
+    # Маппинг русских категорий на Flux-Redux категории
     category_mapping = {
-        "верх": "upper_body",
-        "низ": "lower_body",
-        "платье": "upper_body",  # Платья как верх
-        "upper_body": "upper_body",
-        "lower_body": "lower_body",
-        "dresses": "upper_body"
+        "верх": "upper",
+        "низ": "lower",
+        "платье": "overall",  # ← КЛЮЧЕВОЕ! Платья целиком!
+        # На всякий случай английские варианты
+        "upper": "upper",
+        "lower": "lower",
+        "dresses": "overall"
     }
     
-    model_category = category_mapping.get(category.lower(), "upper_body")
+    model_category = category_mapping.get(category.lower(), "upper")
     
-    print(f"DEBUG replicate_api.py: Маппинг '{category}' -> '{model_category}'")
+    print(f"DEBUG replicate_api.py (Flux-Redux): Маппинг '{category}' -> '{model_category}'")
     
     try:
-        # Для платьев - очень детальный промпт
-        if category.lower() in ["платье", "dress", "dresses"]:
-            garment_description = "A complete full-length elegant dress garment, one-piece clothing item from top to bottom, long dress"
-            steps = 30  # Больше шагов для лучшего качества
-        else:
-            garment_description = "High quality clothing item"
-            steps = 20  # Быстрее для верха и низа
-        
-        print(f"DEBUG replicate_api.py: Промпт='{garment_description}', steps={steps}")
+        print(f"DEBUG replicate_api.py (Flux-Redux): Запускаем Flux-Fill-Redux-Try-On")
         
         output = await replicate.async_run(
-            model_version,
+            model_name,
             input={
-                "human_img": human_url,
-                "garm_img": garment_url,
-                "garment_des": garment_description,
-                "category": model_category,
-                "n_samples": 1,
-                "n_steps": steps,
-                "seed": -1,
-                "crop": True,               # Правильные пропорции 3:4
-                "denoise_steps": steps,
-                "guidance_scale": 2.0
+                "person_image": human_url,    # Фото человека
+                "cloth_image": garment_url,    # Фото одежды
+                "clot_type": model_category    # Категория: upper/lower/overall
             }
         )
         
-        print(f"DEBUG replicate_api.py: Генерация завершена успешно")
+        print(f"DEBUG replicate_api.py (Flux-Redux): Генерация завершена успешно. Тип output: {type(output)}")
         
+        # Обработка результата
         if isinstance(output, list):
             result = str(output[0])
+            print(f"DEBUG replicate_api.py (Flux-Redux): Возвращаем URL из списка: {result[:100]}...")
             return result
         
-        return str(output)
+        result = str(output)
+        print(f"DEBUG replicate_api.py (Flux-Redux): Возвращаем URL: {result[:100]}...")
+        return result
         
     except Exception as e:
-        print(f"DEBUG replicate_api.py: ОШИБКА - {e}")
+        print(f"DEBUG replicate_api.py (Flux-Redux): ОШИБКА при генерации - {e}")
         raise e
