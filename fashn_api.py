@@ -46,27 +46,36 @@ async def generate_vton_fashn(human_url, garment_url, category):
         # Загружаем изображения
         print(f"DEBUG fashn_api.py: Загружаем human_url: {human_url[:100]}")
         human_response = requests.get(human_url)
-        human_image = Image.open(BytesIO(human_response.content))
         
         print(f"DEBUG fashn_api.py: Загружаем garment_url: {garment_url[:100]}")
         garment_response = requests.get(garment_url)
-        garment_image = Image.open(BytesIO(garment_response.content))
         
         # Сохраняем временно
         human_path = "/tmp/human_temp.jpg"
         garment_path = "/tmp/garment_temp.jpg"
         
-        human_image.save(human_path, "JPEG")
-        garment_image.save(garment_path, "JPEG")
+        with open(human_path, "wb") as f:
+            f.write(human_response.content)
         
-        print(f"DEBUG fashn_api.py: Изображения сохранены, запускаем FASHN v1.5")
+        with open(garment_path, "wb") as f:
+            f.write(garment_response.content)
         
-        # Вызов FASHN v1.5 с файлами
+        print(f"DEBUG fashn_api.py: Изображения сохранены, загружаем в FAL.AI")
+        
+        # Загружаем файлы в FAL.AI
+        human_fal_url = fal_client.upload_file(human_path)
+        garment_fal_url = fal_client.upload_file(garment_path)
+        
+        print(f"DEBUG fashn_api.py: Файлы загружены, запускаем FASHN v1.5")
+        print(f"DEBUG fashn_api.py: human_fal_url: {human_fal_url}")
+        print(f"DEBUG fashn_api.py: garment_fal_url: {garment_fal_url}")
+        
+        # Вызов FASHN v1.5 с загруженными URL
         result = fal_client.run(
             "fal-ai/fashn/tryon/v1.5",
             arguments={
-                "model_image": open(human_path, "rb"),
-                "garment_image": open(garment_path, "rb"),
+                "model_image_url": human_fal_url,
+                "garment_image_url": garment_fal_url,
                 "category": fashn_category
             }
         )
