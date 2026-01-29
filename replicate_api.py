@@ -3,7 +3,9 @@ import os
 
 async def generate_vton_image(human_url, garment_url, category):
     """
-    Генерация виртуальной примерки через IDM-VTON
+    Генерация виртуальной примерки через CatVTON-Flux
+    
+    CatVTON лучше работает с платьями чем IDM-VTON!
     
     Args:
         human_url: URL фото человека
@@ -13,66 +15,40 @@ async def generate_vton_image(human_url, garment_url, category):
     Returns:
         str: URL сгенерированного изображения
     """
-    # IDM-VTON - быстрая модель (20-30 сек вместо 5-7 минут)
-    model_version = "cuuupid/idm-vton:906425dbca90663ff5427624839572cc56ea7d380343d13e2a4c4b09d3f0c30f"
+    # CatVTON-Flux - модель которая хорошо работает с платьями!
+    model_name = "mmezhov/catvton-flux"
     
-    print(f"DEBUG replicate_api.py: Получена категория='{category}'")
+    print(f"DEBUG replicate_api_catvton.py: Получена категория='{category}'")
     
-    # Маппинг русских категорий на категории IDM-VTON
-    # ВАЖНО: Для платьев используем upper_body, т.к. dresses часто разделяет на части
-    category_mapping = {
-        "верх": "upper_body",
-        "низ": "lower_body",
-        "платье": "upper_body",  # Используем upper_body для платьев!
-        # На всякий случай английские варианты
-        "upper_body": "upper_body",
-        "lower_body": "lower_body",
-        "dresses": "upper_body"  # И здесь тоже
-    }
-    
-    model_category = category_mapping.get(category.lower(), "upper_body")
-    
-    print(f"DEBUG replicate_api.py: Маппинг '{category}' -> '{model_category}'")
+    # CatVTON не требует категорий! Она автоматически определяет что это платье/верх/низ
+    # Просто передаём фото человека и одежды
     
     try:
-        # Специальный промпт для платьев
-        # Используем upper_body категорию, но в промпте указываем что это платье
-        if category.lower() == "платье" or category.lower() == "dress":
-            garment_description = "A complete full-length dress, one-piece elegant dress garment"
-        else:
-            garment_description = "High quality clothing item"
-        
-        print(f"DEBUG replicate_api.py: Промпт для одежды: '{garment_description}'")
+        print(f"DEBUG replicate_api_catvton.py: Запускаем CatVTON-Flux")
         
         output = await replicate.async_run(
-            model_version,
+            model_name,
             input={
-                "human_img": human_url,
-                "garm_img": garment_url,
-                "garment_des": garment_description,
-                "category": model_category,
-                "n_samples": 1,
-                "n_steps": 20,              # 20 = быстро (~20 сек), 30 = лучше качество
-                "seed": -1,
-                # КРИТИЧЕСКИ ВАЖНО: crop=True для правильных пропорций 3:4
-                "crop": True,               # Автокроп под формат 768x1024 (3:4)
-                # Дополнительные параметры
-                "denoise_steps": 20,
-                "guidance_scale": 2.0
+                "image": human_url,          # Фото человека
+                "garment_image": garment_url, # Фото одежды
+                "num_inference_steps": 30,    # 30 шагов = хорошее качество
+                "guidance_scale": 2.5,        # Сила влияния промпта
+                "seed": -1,                   # Случайный seed
             }
         )
         
-        print(f"DEBUG replicate_api.py: Генерация IDM-VTON завершена успешно. Тип output: {type(output)}")
+        print(f"DEBUG replicate_api_catvton.py: Генерация CatVTON завершена успешно. Тип output: {type(output)}")
         
+        # Обработка результата
         if isinstance(output, list):
             result = str(output[0])
-            print(f"DEBUG replicate_api.py: Возвращаем URL из списка: {result[:100]}...")
+            print(f"DEBUG replicate_api_catvton.py: Возвращаем URL из списка: {result[:100]}...")
             return result
         
         result = str(output)
-        print(f"DEBUG replicate_api.py: Возвращаем URL: {result[:100]}...")
+        print(f"DEBUG replicate_api_catvton.py: Возвращаем URL: {result[:100]}...")
         return result
         
     except Exception as e:
-        print(f"DEBUG replicate_api.py: ОШИБКА при генерации - {e}")
+        print(f"DEBUG replicate_api_catvton.py: ОШИБКА при генерации - {e}")
         raise e
