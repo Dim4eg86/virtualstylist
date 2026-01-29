@@ -4,5 +4,5 @@ replicate==0.25.0
 aiohttp==3.9.3
 requests==2.31.0
 fal-client==0.12.0
-fal-client==0.12.0
 Pillow
+
