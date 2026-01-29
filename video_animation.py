@@ -16,7 +16,7 @@ async def animate_image(image_url: str, animation_type: str = "turn"):
     
     # Промпты для разных типов анимации
     prompts = {
-        "turn": "woman in fashionable clothing elegantly turning around, smooth rotation, professional fashion photography",
+        "turn": "woman in fashionable clothing gracefully turning 360 degrees around herself, full rotation, smooth camera movement, professional fashion show style",
         "step": "woman in fashionable clothing confidently stepping forward, natural movement",
         "walk": "woman in fashionable clothing walking with graceful model walk, smooth movement"
     }
@@ -35,7 +35,7 @@ async def animate_image(image_url: str, animation_type: str = "turn"):
             input={
                 "prompt": prompt,
                 "image": image_url,
-                "duration": "6s",  # 6 секунд
+                "duration": "10s",  # 10 секунд для лучшей анимации!
             }
         )
         
