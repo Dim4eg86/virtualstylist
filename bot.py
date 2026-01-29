@@ -496,6 +496,17 @@ async def human_step(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("set_"))
 async def set_cat(callback: types.CallbackQuery, state: FSMContext):
+    """Выбор категории для обычной ФОТО-примерки"""
+    # Проверяем что мы в правильном состоянии
+    current_state = await state.get_state()
+    
+    print(f"DEBUG set_cat: Текущее состояние = {current_state}")
+    
+    # Если мы в процессе видео-примерки, пропускаем этот обработчик
+    if current_state and 'video' in current_state:
+        print(f"DEBUG set_cat: Пропускаем, это видео-примерка")
+        return
+    
     # Маппинг для IDM-VTON (передаём на русском в replicate_api.py)
     cat_map = {
         "upper": "верх",
@@ -504,6 +515,8 @@ async def set_cat(callback: types.CallbackQuery, state: FSMContext):
     }
     key = callback.data.split("_")[1]
     category = cat_map[key]
+    
+    print(f"DEBUG set_cat (ФОТО): Выбрана категория - кнопка='{key}', передаём='{category}'")
     
     await state.update_data(category=category)
     
@@ -657,8 +670,10 @@ async def video_human_step(message: types.Message, state: FSMContext):
         "Выбери, что хочешь примерить:",
         reply_markup=get_category_kb()
     )
+    # Меняем состояние на ожидание категории
+    await state.set_state(VTONState.wait_video_category)
 
-@dp.callback_query(F.data.startswith("set_"), VTONState.wait_video_human)
+@dp.callback_query(F.data.startswith("set_"), VTONState.wait_video_category)
 async def video_set_cat(callback: types.CallbackQuery, state: FSMContext):
     """Выбор категории для видео-примерки"""
     cat_map = {
@@ -679,6 +694,7 @@ async def video_set_cat(callback: types.CallbackQuery, state: FSMContext):
         "💡 <i>Совет: Чёткое фото с хорошим освещением</i>"
     )
     await state.set_state(VTONState.wait_video_garment)
+    await callback.answer()
 
 @dp.message(VTONState.wait_video_garment, F.photo)
 async def video_garment_step(message: types.Message, state: FSMContext):
@@ -738,10 +754,17 @@ async def video_create_final(callback: types.CallbackQuery, state: FSMContext):
     
     try:
         # ШАГ 1: Создаём фото примерку
-        print(f"DEBUG VIDEO: Шаг 1 - создание фото")
+        print(f"DEBUG VIDEO-FINAL: ========== НАЧАЛО ==========")
+        print(f"DEBUG VIDEO-FINAL: Данные из state: {data}")
+        print(f"DEBUG VIDEO-FINAL: Категория = '{data['category']}'")
+        print(f"DEBUG VIDEO-FINAL: Шаг 1 - создание фото через IDM-VTON")
+        
         result_url = await generate_vton_image(data['human'], data['garment'], data['category'])
         
+        print(f"DEBUG VIDEO-FINAL: Фото создано успешно: {result_url[:100]}")
+        
         # ШАГ 2: Создаём видео из фото
+        print(f"DEBUG VIDEO-FINAL: Шаг 2 - создание видео из фото")
         print(f"DEBUG VIDEO: Шаг 2 - создание видео из фото")
         video_url = await animate_image(result_url, animation_type)
         
