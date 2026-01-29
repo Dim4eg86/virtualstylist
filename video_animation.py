@@ -35,7 +35,7 @@ async def animate_image(image_url: str, animation_type: str = "turn"):
             input={
                 "prompt": prompt,
                 "image": image_url,
-                "duration": "10s",  # 10 секунд для лучшей анимации!
+                "duration": 10,  # 10 секунд (число, не строка!)
             }
         )
         
