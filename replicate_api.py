@@ -10,7 +10,7 @@ async def generate_vton_image(human_url, garment_url, category):
     Args:
         human_url: URL фото человека
         garment_url: URL фото одежды
-        category: Категория одежды ("верх", "низ", "платье")
+        category: Категория одежды ("верх", "низ", "платье") - для совместимости, но не используется
     
     Returns:
         str: URL сгенерированного изображения
@@ -18,13 +18,10 @@ async def generate_vton_image(human_url, garment_url, category):
     # CatVTON-Flux - модель которая хорошо работает с платьями!
     model_name = "mmezhov/catvton-flux"
     
-    print(f"DEBUG replicate_api_catvton.py: Получена категория='{category}'")
-    
-    # CatVTON не требует категорий! Она автоматически определяет что это платье/верх/низ
-    # Просто передаём фото человека и одежды
+    print(f"DEBUG replicate_api.py (CatVTON): Получена категория='{category}' (не используется, CatVTON определяет сама)")
     
     try:
-        print(f"DEBUG replicate_api_catvton.py: Запускаем CatVTON-Flux")
+        print(f"DEBUG replicate_api.py (CatVTON): Запускаем CatVTON-Flux")
         
         output = await replicate.async_run(
             model_name,
@@ -37,18 +34,18 @@ async def generate_vton_image(human_url, garment_url, category):
             }
         )
         
-        print(f"DEBUG replicate_api_catvton.py: Генерация CatVTON завершена успешно. Тип output: {type(output)}")
+        print(f"DEBUG replicate_api.py (CatVTON): Генерация завершена успешно. Тип output: {type(output)}")
         
         # Обработка результата
         if isinstance(output, list):
             result = str(output[0])
-            print(f"DEBUG replicate_api_catvton.py: Возвращаем URL из списка: {result[:100]}...")
+            print(f"DEBUG replicate_api.py (CatVTON): Возвращаем URL из списка: {result[:100]}...")
             return result
         
         result = str(output)
-        print(f"DEBUG replicate_api_catvton.py: Возвращаем URL: {result[:100]}...")
+        print(f"DEBUG replicate_api.py (CatVTON): Возвращаем URL: {result[:100]}...")
         return result
         
     except Exception as e:
-        print(f"DEBUG replicate_api_catvton.py: ОШИБКА при генерации - {e}")
+        print(f"DEBUG replicate_api.py (CatVTON): ОШИБКА при генерации - {e}")
         raise e
