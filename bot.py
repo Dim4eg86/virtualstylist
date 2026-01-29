@@ -10,8 +10,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiohttp import web
 
 import database as db
-# Используем CatVTON - лучше работает с платьями!
-from replicate_api_catvton import generate_vton_image
+from replicate_api import generate_vton_image
 from video_animation import animate_image
 import yookassa
 
