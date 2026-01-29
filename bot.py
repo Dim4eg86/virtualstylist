@@ -801,11 +801,11 @@ async def video_create_final(callback: types.CallbackQuery, state: FSMContext):
         video_res = requests.get(video_url).content
         
         # Списываем 150₽ (15000 копеек)
-        await db.update_balance(message.from_user.id, -15000, is_video=True)
+        await db.update_balance(callback.from_user.id, -15000, is_video=True)
         new_balance = (user['balance'] - 15000) / 100
         
         # Сохраняем в историю
-        await db.save_generation(message.from_user.id, data['category'], result_url)
+        await db.save_generation(callback.from_user.id, data['category'], result_url)
         
         admin_badge = "👑 " if user.get('is_admin') else ""
         
@@ -819,8 +819,8 @@ async def video_create_final(callback: types.CallbackQuery, state: FSMContext):
         print(f"DEBUG: Списано 150₽ за видео-примерку, новый баланс: {new_balance}₽")
         
         # Отправляем видео
-        await message.answer_video(
-            types.BufferedInputFile(video_res, filename="video_tryoन.mp4"),
+        await callback.message.answer_video(
+            types.BufferedInputFile(video_res, filename="video_tryon.mp4"),
             caption=caption,
             reply_markup=get_main_menu()
         )
