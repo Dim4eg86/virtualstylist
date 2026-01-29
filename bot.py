@@ -497,18 +497,12 @@ async def human_step(message: types.Message, state: FSMContext):
         reply_markup=get_category_kb()
     )
 
-@dp.callback_query(F.data.startswith("set_"))
+@dp.callback_query(F.data.startswith("set_"), VTONState.wait_human)
 async def set_cat(callback: types.CallbackQuery, state: FSMContext):
-    """Выбор категории для обычной ФОТО-примерки"""
-    # Проверяем что мы в правильном состоянии
-    current_state = await state.get_state()
+    """Выбор категории для обычной ФОТО-примерки (НЕ видео!)"""
+    # Этот хэндлер ТОЛЬКО для wait_human состояния (обычная фото примерка)
     
-    print(f"DEBUG set_cat: Текущее состояние = {current_state}")
-    
-    # Если мы в процессе видео-примерки, пропускаем этот обработчик
-    if current_state and 'video' in current_state:
-        print(f"DEBUG set_cat: Пропускаем, это видео-примерка")
-        return
+    print(f"DEBUG set_cat (ФОТО): Вызван для обычной примерки")
     
     # Маппинг для IDM-VTON (передаём на русском в replicate_api.py)
     cat_map = {
