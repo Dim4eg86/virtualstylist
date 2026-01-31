@@ -1179,6 +1179,25 @@ async def yookassa_webhook(request):
                     f"На твой счет зачислено <b>{payment['credits']}</b> примерок!\n"
                     f"Спасибо за покупку! 💚"
                 )
+                
+                # Уведомляем админа о покупке
+                ADMIN_ID = 610820340  # Твой Telegram ID
+                user_info = await db.get_user(payment['user_id'])
+                amount_rub = payment['amount'] / 100
+                
+                admin_notification = (
+                    "🔔 <b>Новая покупка!</b>\n\n"
+                    f"👤 User ID: <code>{payment['user_id']}</code>\n"
+                    f"💰 Сумма: <b>{amount_rub:.0f}₽</b>\n"
+                    f"🎫 Примерок: <b>{payment['credits']}</b>\n"
+                    f"💳 Платеж ID: <code>{payment_id}</code>\n\n"
+                    f"📊 Баланс после: <b>{user_info['balance'] / 100:.0f}₽</b>"
+                )
+                
+                try:
+                    await bot.send_message(ADMIN_ID, admin_notification)
+                except Exception as e:
+                    print(f"Не удалось отправить уведомление админу: {e}")
         
         return web.Response(text="OK")
     except Exception as e:
