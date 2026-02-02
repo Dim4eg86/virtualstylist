@@ -1,121 +1,100 @@
-import os
-import uuid
-import aiohttp
-import base64
-from typing import Optional
+"""
+Модуль для работы с платежами через ЮKassa
+"""
 
-YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
-YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
-
-# Пакеты пополнения баланса (в копейках)
-# amount - сколько платит пользователь
-# credit_amount - сколько зачисляется (если не указано, то = amount)
+# Пакеты для пополнения баланса
 PACKAGES = {
-    "test_pack": {"amount": 500, "credit_amount": 15000, "title": "5₽ ТЕСТ", "desc": "→ бонус 150₽ (админ)"},
-    "250_pack": {"amount": 25000, "title": "250₽", "desc": "→ 5 фото примерок"},
-    "500_pack": {"amount": 50000, "title": "500₽", "desc": "→ 12 фото или 5 видео"},
-    "1000_pack": {"amount": 100000, "title": "1000₽", "desc": "→ 25 фото или 10 видео"}
+    "test_pack": {
+        "title": "🧪 Тест",
+        "desc": "(10₽ = 1 примерка)",
+        "amount": 1000,  # в копейках
+        "credits": 1  # количество примерок
+    },
+    "150_3photo": {
+        "title": "📸 3 фото-примерки",
+        "desc": "(150₽)",
+        "amount": 15000,
+        "credits": 3
+    },
+    "150_1video": {
+        "title": "🎬 1 видео-примерка",
+        "desc": "(150₽)",
+        "amount": 15000,
+        "credits": 150  # 150₽ на балансе для видео
+    },
+    "250_pack": {
+        "title": "💎 Стартовый",
+        "desc": "(250₽ = 5 примерок)",
+        "amount": 25000,
+        "credits": 5
+    },
+    "500_pack": {
+        "title": "⭐ Популярный",
+        "desc": "(500₽ = 10 примерок + 1 бонус)",
+        "amount": 50000,
+        "credits": 11
+    },
+    "1000_pack": {
+        "title": "👑 Премиум",
+        "desc": "(1000₽ = 20 примерок + 3 бонус)",
+        "amount": 100000,
+        "credits": 23
+    }
 }
 
-def get_auth_header():
-    """Генерирует заголовок авторизации для Юкассы"""
-    credentials = f"{YOOKASSA_SHOP_ID}:{YOOKASSA_SECRET_KEY}"
-    encoded = base64.b64encode(credentials.encode()).decode()
-    return f"Basic {encoded}"
-
-async def create_payment(package_id: str, user_id: int, return_url: str) -> Optional[dict]:
+def create_payment(package_id, user_id, return_url):
     """
-    Создает платеж в Юкассе
+    Создает платеж через ЮKassa
     
     Args:
-        package_id: ID пакета (например, "250_pack")
-        user_id: Telegram ID пользователя
+        package_id: ID пакета из PACKAGES
+        user_id: Telegram user ID
         return_url: URL для возврата после оплаты
     
     Returns:
-        dict с payment_id и confirmation_url или None при ошибке
+        dict: {'payment_id': str, 'confirmation_url': str, 'amount': int}
+        или None в случае ошибки
     """
+    import os
+    from yookassa import Configuration, Payment
+    import uuid
+    
     if package_id not in PACKAGES:
+        print(f"ERROR: Неизвестный package_id: {package_id}")
         return None
     
     package = PACKAGES[package_id]
-    payment_id = str(uuid.uuid4())
     
-    # Для зачисления используем credit_amount если есть, иначе amount
-    credit_amount = package.get('credit_amount', package['amount'])
+    # Настройка API ЮKassa
+    Configuration.account_id = os.getenv("YOOKASSA_SHOP_ID")
+    Configuration.secret_key = os.getenv("YOOKASSA_SECRET_KEY")
     
-    payload = {
-        "amount": {
-            "value": f"{package['amount'] / 100:.2f}",
-            "currency": "RUB"
-        },
-        "confirmation": {
-            "type": "redirect",
-            "return_url": return_url
-        },
-        "capture": True,
-        "description": f"{package['title']} на баланс Virtual Stylist AI",
-        "metadata": {
-            "user_id": str(user_id),
-            "package_id": package_id,
-            "amount": credit_amount  # Зачисляем credit_amount, а не amount!
+    try:
+        # Создаем платеж
+        payment = Payment.create({
+            "amount": {
+                "value": f"{package['amount'] / 100:.2f}",
+                "currency": "RUB"
+            },
+            "confirmation": {
+                "type": "redirect",
+                "return_url": return_url
+            },
+            "capture": True,
+            "description": f"{package['title']} для Virtual Stylist AI",
+            "metadata": {
+                "user_id": str(user_id),
+                "package_id": package_id,
+                "credits": package['credits']
+            }
+        }, uuid.uuid4())
+        
+        return {
+            "payment_id": payment.id,
+            "confirmation_url": payment.confirmation.confirmation_url,
+            "amount": package['amount']
         }
-    }
-    
-    headers = {
-        "Authorization": get_auth_header(),
-        "Idempotence-Key": payment_id,
-        "Content-Type": "application/json"
-    }
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://api.yookassa.ru/v3/payments",
-                json=payload,
-                headers=headers
-            ) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return {
-                        "payment_id": data['id'],
-                        "confirmation_url": data['confirmation']['confirmation_url'],
-                        "amount": package['amount']
-                    }
-                else:
-                    error_text = await response.text()
-                    print(f"Ошибка создания платежа: {response.status} - {error_text}")
-                    return None
+        
     except Exception as e:
-        print(f"Ошибка при обращении к Юкассе: {e}")
-        return None
-
-async def check_payment_status(payment_id: str) -> Optional[dict]:
-    """
-    Проверяет статус платежа в Юкассе
-    
-    Returns:
-        dict со статусом или None при ошибке
-    """
-    headers = {
-        "Authorization": get_auth_header(),
-        "Content-Type": "application/json"
-    }
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"https://api.yookassa.ru/v3/payments/{payment_id}",
-                headers=headers
-            ) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return {
-                        "status": data['status'],
-                        "paid": data['paid'],
-                        "metadata": data.get('metadata', {})
-                    }
-                return None
-    except Exception as e:
-        print(f"Ошибка проверки статуса: {e}")
+        print(f"ERROR creating payment: {e}")
         return None
